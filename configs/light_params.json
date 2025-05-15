@@ -1,0 +1,9 @@
+{
+    "Light": {
+        "Brightness": 5,
+        "Hue": 60,
+        "Name": "Light",
+        "Power": true,
+        "Saturation": 10
+    }
+}

@@ -1,0 +1,2 @@
+[console_scripts]
+mqtt-cli = mqtt_cli.cli:cli
