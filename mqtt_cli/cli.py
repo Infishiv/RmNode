@@ -6,18 +6,24 @@ from .mqtt_operations import MQTTOperations
 from .config_manager import ConfigManager
 from .ota_handler import OTAHandler
 
-def get_project_root():
-    """Get the absolute path to the project root directory"""
-    # Get the directory where this script (cli.py) is located
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    # Go up one level to reach the project root (assuming cli.py is in a package)
-    return os.path.dirname(current_dir)
-
-def resolve_cert_path(cert_folder):
-    """Convert relative cert folder path to absolute path"""
+def get_cert_folder_path(cert_folder):
+    """Resolve the absolute path to the certificate folder"""
     if os.path.isabs(cert_folder):
         return cert_folder
-    return os.path.join(get_project_root(), cert_folder)
+    
+    # Try relative to current working directory first
+    cwd_path = os.path.join(os.getcwd(), cert_folder)
+    if os.path.exists(cwd_path):
+        return cwd_path
+    
+    # Try relative to package installation directory
+    package_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    package_path = os.path.join(package_dir, cert_folder)
+    if os.path.exists(package_path):
+        return package_path
+    
+    # Fall back to default location
+    return cert_folder
 
 @click.group()
 @click.option('--broker', default="a3q0b7ncspt14l-ats.iot.us-east-1.amazonaws.com", help='MQTT broker URL')
@@ -30,10 +36,11 @@ def cli(ctx, broker, node_id, cert_folder):
     ctx.obj['BROKER'] = broker
     ctx.obj['NODE_ID'] = node_id
     
-    # Convert to absolute path
-    abs_cert_folder = resolve_cert_path(cert_folder)
+    # Resolve certificate path
+    abs_cert_folder = get_cert_folder_path(cert_folder)
     ctx.obj['CERT_FOLDER'] = abs_cert_folder
     
+    # Initialize components
     ctx.obj['MQTT'] = MQTTOperations(
         broker=broker,
         node_id=node_id,
@@ -41,7 +48,6 @@ def cli(ctx, broker, node_id, cert_folder):
     )
     ctx.obj['CONFIG'] = ConfigManager()
 
-# [Rest of your commands remain exactly the same...]
 @cli.command()
 @click.pass_context
 def connect(ctx):
