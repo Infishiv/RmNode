@@ -1,14 +1,27 @@
 import click
 import json
+import os
 from pathlib import Path
 from .mqtt_operations import MQTTOperations
 from .config_manager import ConfigManager
 from .ota_handler import OTAHandler
 
+def get_project_root():
+    """Get the absolute path to the project root directory"""
+    # Get the directory where this script (cli.py) is located
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    # Go up one level to reach the project root (assuming cli.py is in a package)
+    return os.path.dirname(current_dir)
+
+def resolve_cert_path(cert_folder):
+    """Convert relative cert folder path to absolute path"""
+    if os.path.isabs(cert_folder):
+        return cert_folder
+    return os.path.join(get_project_root(), cert_folder)
+
 @click.group()
 @click.option('--broker', default="a3q0b7ncspt14l-ats.iot.us-east-1.amazonaws.com", help='MQTT broker URL')
-@click.option('--node-id', default="VmKK7rtYBdZYhhU8XeNKw4", help='Node ID')
-# @click.option('--node-id', required=True, help='Node ID')
+@click.option('--node-id', required=True, help='Node ID')
 @click.option('--cert-folder', default="certs", help='Path to certificate folder')
 @click.pass_context
 def cli(ctx, broker, node_id, cert_folder):
@@ -16,10 +29,19 @@ def cli(ctx, broker, node_id, cert_folder):
     ctx.ensure_object(dict)
     ctx.obj['BROKER'] = broker
     ctx.obj['NODE_ID'] = node_id
-    ctx.obj['CERT_FOLDER'] = cert_folder
-    ctx.obj['MQTT'] = MQTTOperations(broker=broker, node_id=node_id, cert_folder=cert_folder)
+    
+    # Convert to absolute path
+    abs_cert_folder = resolve_cert_path(cert_folder)
+    ctx.obj['CERT_FOLDER'] = abs_cert_folder
+    
+    ctx.obj['MQTT'] = MQTTOperations(
+        broker=broker,
+        node_id=node_id,
+        cert_folder=abs_cert_folder
+    )
     ctx.obj['CONFIG'] = ConfigManager()
 
+# [Rest of your commands remain exactly the same...]
 @cli.command()
 @click.pass_context
 def connect(ctx):
@@ -76,12 +98,10 @@ def unsubscribe(ctx, topic):
     except Exception as e:
         click.echo(f"Unsubscribe failed: {str(e)}", err=True)
 
-
 @cli.group()
 def device():
     """Device configuration commands"""
     pass
-
 
 @device.command()
 @click.argument('device_type', type=click.Choice(['light', 'washer', 'heater'], case_sensitive=False))
@@ -111,14 +131,8 @@ def make(ctx, device_type):
         )
 
         click.echo(f"Successfully configured node as {device_type}")
-        """click.echo("Published config:")
-        click.echo(json.dumps(config, indent=2))
-        click.echo("Published params:")
-        click.echo(json.dumps(params, indent=2))"""
-
     except Exception as e:
         click.echo(f"Failed to make device: {str(e)}", err=True)
-
 
 @device.command()
 @click.argument('power_state', type=click.Choice(['on', 'off'], case_sensitive=False))
@@ -162,7 +176,6 @@ def set_param(ctx, power_state):
     except Exception as e:
         click.echo(f"Failed to update power state: {str(e)}", err=True)
 
-
 @device.command()
 @click.pass_context
 def show(ctx):
@@ -175,13 +188,10 @@ def show(ctx):
     except Exception as e:
         click.echo(f"Failed to show configuration: {str(e)}", err=True)
 
-
-
 @cli.group()
 def ota():
     """Over-the-Air (OTA) update commands"""
     pass
-
 
 @ota.command()
 @click.option('--fw-version', default="1.0.0", help='Current firmware version')
@@ -210,7 +220,6 @@ def request(ctx, fw_version, timeout):
                 click.echo("Success status sent")
     except Exception as e:
         click.echo(f"Error: {str(e)}", err=True)
-
 
 @ota.command()
 @click.argument('job_id')
