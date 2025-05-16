@@ -117,6 +117,45 @@ def cli(ctx, broker, node_id, cert_folder):
 
 # [Rest of your existing commands remain exactly the same...]
 
+# @cli.command(name='node-mapping')
+# @click.option('--user-id', required=True, help='User ID for mapping')
+# @click.option('--secret-key', required=True, help='Secret key for authentication')
+# @click.option('--reset', is_flag=True, help='Flag to reset the mapping')
+# @click.option('--timeout', default=300, show_default=True, help='Timeout in seconds')
+# @click.pass_context
+# def node_mapping(ctx, user_id, secret_key, reset, timeout):
+#     """Map node to user with secret key authentication"""
+#     try:
+#         # Get node_id from main CLI options
+#         node_id = ctx.obj['NODE_ID']
+        
+#         # Create the mapping payload
+#         payload = {
+#             "node_id": node_id,
+#             "user_id": user_id,
+#             "secret_key": secret_key,  # Using provided secret key
+#             "reset": reset,
+#             "timeout": timeout
+#         }
+        
+#         # Get MQTT client and publish
+#         mqtt = ctx.obj['MQTT']
+#         mqtt.publish(
+#             topic=f"node/{node_id}/user/mapping",
+#             payload=json.dumps(payload),
+#             qos=1
+#         )
+        
+#         # Success output
+#         click.echo(click.style("✓ Node mapping published", fg='green'))
+#         click.echo(f"Topic: node/{node_id}/user/mapping")
+#         click.echo("Payload:")
+#         click.echo(json.dumps(payload, indent=2))
+        
+#     except Exception as e:
+#         click.echo(click.style(f"Error: {str(e)}", fg='red'), err=True)
+
+
 @cli.command(name='node-mapping')
 @click.option('--user-id', required=True, help='User ID for mapping')
 @click.option('--secret-key', required=True, help='Secret key for authentication')
@@ -133,27 +172,46 @@ def node_mapping(ctx, user_id, secret_key, reset, timeout):
         payload = {
             "node_id": node_id,
             "user_id": user_id,
-            "secret_key": secret_key,  # Using provided secret key
+            "secret_key": secret_key,
             "reset": reset,
             "timeout": timeout
         }
         
-        # Get MQTT client and publish
+        # Get MQTT client
         mqtt = ctx.obj['MQTT']
-        mqtt.publish(
-            topic=f"node/{node_id}/user/mapping",
-            payload=json.dumps(payload),
-            qos=1
-        )
+        
+        # Publish with success/failure tracking
+        publish_success = False
+        try:
+            result = mqtt.publish(
+                topic=f"node/{node_id}/user/mapping",
+                payload=json.dumps(payload),
+                qos=1
+            )
+            
+            # Wait for publish to complete (for QoS > 0)
+            result.wait_for_publish(timeout=5)
+            publish_success = result.is_published()
+            
+        except Exception as pub_error:
+            raise Exception(f"Publish failed: {str(pub_error)}")
+        
+        if not publish_success:
+            raise Exception("Publish didn't complete successfully")
         
         # Success output
-        click.echo(click.style("✓ Node mapping published", fg='green'))
+        click.echo(click.style("✓ Node mapping published successfully", fg='green'))
         click.echo(f"Topic: node/{node_id}/user/mapping")
         click.echo("Payload:")
         click.echo(json.dumps(payload, indent=2))
         
+        # Return success status (0 for success)
+        ctx.exit(0)
+        
     except Exception as e:
-        click.echo(click.style(f"Error: {str(e)}", fg='red'), err=True)
+        click.echo(click.style(f"✗ Error: {str(e)}", fg='red'), err=True)
+        # Return failure status (1 for failure)
+        ctx.exit(1)
 
 # --------
 
