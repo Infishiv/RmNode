@@ -1,57 +1,3 @@
-# import click
-# import json
-# import os
-# from pathlib import Path
-# from .mqtt_operations import MQTTOperations
-# from .config_manager import ConfigManager
-# from .ota_handler import OTAHandler
-
-# def get_cert_folder_path(cert_folder):
-#     """Resolve the absolute path to the certificate folder"""
-#     if os.path.isabs(cert_folder):
-#         return cert_folder
-    
-#     # Try relative to current working directory first
-#     cwd_path = os.path.join(os.getcwd(), cert_folder)
-#     if os.path.exists(cwd_path):
-#         return cwd_path
-    
-#     # Try relative to package installation directory
-#     package_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-#     package_path = os.path.join(package_dir, cert_folder)
-#     if os.path.exists(package_path):
-#         return package_path
-    
-#     # Fall back to default location
-#     return cert_folder
-
-# @click.group()
-# @click.option('--broker', default="a3q0b7ncspt14l-ats.iot.us-east-1.amazonaws.com", help='MQTT broker URL')
-# @click.option('--node-id', required=True, help='Node ID')
-# @click.option('--cert-folder', default="certs", help='Path to certificate folder')
-# @click.pass_context
-# def cli(ctx, broker, node_id, cert_folder):
-#     """MQTT CLI Client for IoT Operations"""
-#     ctx.ensure_object(dict)
-#     ctx.obj['BROKER'] = broker
-#     ctx.obj['NODE_ID'] = node_id
-    
-#     # Resolve certificate path
-#     abs_cert_folder = get_cert_folder_path(cert_folder)
-#     ctx.obj['CERT_FOLDER'] = abs_cert_folder
-    
-#     # Initialize components
-#     ctx.obj['MQTT'] = MQTTOperations(
-#         broker=broker,
-#         node_id=node_id,
-#         cert_folder=abs_cert_folder
-#     )
-#     ctx.obj['CONFIG'] = ConfigManager()
-
-
-
-
-
 import click
 import json
 import os
@@ -115,60 +61,16 @@ def cli(ctx, broker, node_id, cert_folder):
     )
     ctx.obj['CONFIG'] = ConfigManager()
 
-# [Rest of your existing commands remain exactly the same...]
-
-# @cli.command(name='node-mapping')
-# @click.option('--user-id', required=True, help='User ID for mapping')
-# @click.option('--secret-key', required=True, help='Secret key for authentication')
-# @click.option('--reset', is_flag=True, help='Flag to reset the mapping')
-# @click.option('--timeout', default=300, show_default=True, help='Timeout in seconds')
-# @click.pass_context
-# def node_mapping(ctx, user_id, secret_key, reset, timeout):
-#     """Map node to user with secret key authentication"""
-#     try:
-#         # Get node_id from main CLI options
-#         node_id = ctx.obj['NODE_ID']
-        
-#         # Create the mapping payload
-#         payload = {
-#             "node_id": node_id,
-#             "user_id": user_id,
-#             "secret_key": secret_key,  # Using provided secret key
-#             "reset": reset,
-#             "timeout": timeout
-#         }
-        
-#         # Get MQTT client and publish
-#         mqtt = ctx.obj['MQTT']
-#         mqtt.publish(
-#             topic=f"node/{node_id}/user/mapping",
-#             payload=json.dumps(payload),
-#             qos=1
-#         )
-        
-#         # Success output
-#         click.echo(click.style("✓ Node mapping published", fg='green'))
-#         click.echo(f"Topic: node/{node_id}/user/mapping")
-#         click.echo("Payload:")
-#         click.echo(json.dumps(payload, indent=2))
-        
-#     except Exception as e:
-#         click.echo(click.style(f"Error: {str(e)}", fg='red'), err=True)
-
-
 @cli.command(name='node-mapping')
 @click.option('--user-id', required=True, help='User ID for mapping')
 @click.option('--secret-key', required=True, help='Secret key for authentication')
 @click.option('--reset', is_flag=True, help='Flag to reset the mapping')
-@click.option('--timeout', default=300, show_default=True, help='Timeout in seconds')
+@click.option('--timeout', default=600, show_default=True, help='Timeout in seconds')
 @click.pass_context
 def node_mapping(ctx, user_id, secret_key, reset, timeout):
-    """Map node to user with secret key authentication"""
+    """User Node Mapping"""
     try:
-        # Get node_id from main CLI options
         node_id = ctx.obj['NODE_ID']
-        
-        # Create the mapping payload
         payload = {
             "node_id": node_id,
             "user_id": user_id,
@@ -176,41 +78,23 @@ def node_mapping(ctx, user_id, secret_key, reset, timeout):
             "reset": reset,
             "timeout": timeout
         }
-        
-        # Get MQTT client
         mqtt = ctx.obj['MQTT']
-        
-        # Publish with success/failure tracking
-        publish_success = False
-        try:
-            result = mqtt.publish(
-                topic=f"node/{node_id}/user/mapping",
-                payload=json.dumps(payload),
-                qos=1
-            )
-            
-            # Wait for publish to complete (for QoS > 0)
-            result.wait_for_publish(timeout=5)
-            publish_success = result.is_published()
-            
-        except Exception as pub_error:
-            raise Exception(f"Publish failed: {str(pub_error)}")
-        
-        if not publish_success:
-            raise Exception("Publish didn't complete successfully")
-        
-        # Success output
-        click.echo(click.style("✓ Node mapping published successfully", fg='green'))
+        # print(json.dumps(payload, indent=2))
+        result = mqtt.publish(
+            topic=f"node/{node_id}/user/mapping",
+            payload=json.dumps(payload),
+            qos=1
+        )
+        if not result.wait_for_publish(timeout=5):
+            raise Exception("Publish timeout or failure")
+
+        click.echo(click.style("\u2713 Node mapping published successfully", fg='green'))
         click.echo(f"Topic: node/{node_id}/user/mapping")
         click.echo("Payload:")
         click.echo(json.dumps(payload, indent=2))
-        
-        # Return success status (0 for success)
         ctx.exit(0)
-        
     except Exception as e:
-        click.echo(click.style(f"✗ Error: {str(e)}", fg='red'), err=True)
-        # Return failure status (1 for failure)
+        click.echo(click.style(f"\u2717 Error: {str(e)}", fg='red'), err=True)
         ctx.exit(1)
 
 # --------
