@@ -1,0 +1,8 @@
+{
+    "url": "https://esp-rainmaker-ota-980921722781-dev.s3.amazonaws.com/users/e4637da7-9d82-c313-6e0e-ede986d47959/firmwareimages/cOtkGcaHR/Alexa%20ech32.bin?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIA6IY35U6O7ZVNCGL5%2F20250525%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20250525T165638Z&X-Amz-Expires=86400&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEGkaCXVzLWVhc3QtMSJHMEUCIEeymp%2FRo0zwqjex5zthYSX1n%2Bkq03iyxLxijba0jcgzAiEAn%2F72cHIrast5IcYnMIJnqRKNfeF8Uvgz1TJy28Ro%2Fmwq7AIIMhAAGgw5ODA5MjE3MjI3ODEiDGFADSNuBHlVHGA4iirJAp5lNmIm36jvBwFMyCQ0K%2FHcNNCqWummaxy116W%2Fq%2B8dr04eOXAfDpBU0pQgIenoZoOak5p1LGCkk57NSqvInrCsb6AYdOE3JP5C0XeYy%2BdtXg0rA6lwZmWTvu%2BzyOyGHok%2BEDjORbKeT0CSmGIAoR3oCpQxBAOLWQeqoc0bAo9kzK%2B5L5413WXExmU235TehrwQT%2FRKDVV2uf%2Bb8cvHuMvmWOtozWNMnFYM%2Fhc6yuCAnDpw%2BAgb%2BKA0ayYP06ZBEgd0MDV6ssRhuDQZWSbcjCC0Mv%2Bb8wMbcpluQIBk3CgEnZAyN1GwdmOzAjy6%2ByPFqy2cuyeJW0Jopda0vAXOWbWZw2SpfVsQ%2BlGCG0HpelPiclympc6QaNM%2B1%2FfIZIFd%2FKJ6kpot%2F8GfpZ7jgxEgHm45ZwgjxkNYPfKvRWWoFpvTqiayhaiatiWUMMWXzcEGOp4Bezv924jxBPtLsp2xCPdKF5I5dO2fXGZouIOzWJBUXL7Idx9bkiI8o8CKvf6M%2FzIQxRNwzX4DdNZN0dACQ3buEDjX3r%2FSO%2F2%2B55K9PG4UtpzPaMKfnftaKPYBvPpLIZ%2BMDn6JWeEXqKGlD8GDP6P1HRAlIbHbdAsWDf1MX1%2B0cnH%2FZGYiBM9FNhpIoIvaJK%2F2vbiL%2BdiFu7p3H4daJsw%3D&X-Amz-SignedHeaders=host&X-Amz-Signature=d0e88e594360325e89301ed9ecee49a2498bc877c64f0be75f2857217f38f250",
+    "stream_id": "None",
+    "file_md5": "3745c9cfa6bdb90d3e18b99bcbc27ef0",
+    "file_size": 1048576,
+    "ota_available": true,
+    "metadata": "None"
+}

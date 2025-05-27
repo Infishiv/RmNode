@@ -1,3 +1,4 @@
 click>=8.0.0
+paho-mqtt>=1.5.0
 AWSIoTPythonSDK>=1.4.0
 

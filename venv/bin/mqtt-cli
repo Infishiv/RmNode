@@ -1,4 +1,4 @@
-#!/Users/esp/Downloads/Mqtt_cli_v1/venv/bin/python3
+#!/Users/esp/Downloads/Mqtt_cli_v01-1/venv/bin/python3
 # EASY-INSTALL-ENTRY-SCRIPT: 'mqtt-cli','console_scripts','mqtt-cli'
 import re
 import sys

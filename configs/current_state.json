@@ -71,7 +71,7 @@
       "project_name": "GVA testing",
       "type": "washer"
     },
-    "node_id": "9Lwp8b9oi6Aa7GKs7VUNjk",
+    "node_id": "5W6mt6BFxBYcdb4Xsdj7C5",
     "services": [
       {
         "name": "Time",
@@ -166,7 +166,7 @@
   "current_params": {
     "Washer": {
       "Name": "Washer",
-      "Power": true,
+      "Power": "false",
       "Paused": true
     }
   }
