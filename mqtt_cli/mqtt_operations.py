@@ -1,60 +1,96 @@
+"""
+MQTT operations for ESP RainMaker.
+"""
+import paho.mqtt.client as mqtt
+import ssl
+import json
 import time
 import logging
 import os
 from pathlib import Path
 import AWSIoTPythonSDK
 from AWSIoTPythonSDK.MQTTLib import AWSIoTMQTTClient
-import json
+from typing import Optional, Dict, Any, Callable
 
 PORT = 443
-OPERATION_TIMEOUT = 10
-CONNECT_DISCONNECT_TIMEOUT = 5
+OPERATION_TIMEOUT = 30
+CONNECT_DISCONNECT_TIMEOUT = 20
 
 
 class MQTTOperationsException(Exception):
     """Class to handle MQTTOperations method exceptions."""
 
 class MQTTOperations:
-    """Class to handle MQTT operations by node"""
-    
-    def __init__(self, **kwargs):
-        self.broker = kwargs['broker']
-        self.node_id = kwargs['node_id']
-        cert_folder = kwargs.get('cert_folder', 'certs')
-
-        # Resolve absolute certificate path
-        cert_folder = Path(cert_folder)
-        if not cert_folder.is_absolute():
-            script_dir = Path(__file__).resolve().parent
-            project_root = script_dir.parent
-            cert_folder = project_root / cert_folder
-
-        self.cert_folder = cert_folder
-        self.mqtt_client = AWSIoTMQTTClient(self.node_id)
+    """MQTT client operations."""
+    def __init__(self, broker, node_id, cert_path, key_path, root_path=None):
+        self.broker = broker
+        self.node_id = node_id
+        self.cert_path = cert_path
+        self.key_path = key_path
+        
+        # Use root.pem from our project's certs directory
+        if not root_path:
+            script_dir = Path(__file__).resolve().parent.parent
+            root_path = script_dir / 'certs' / 'root.pem'
+            if not root_path.exists():
+                raise MQTTOperationsException(f"Root CA certificate not found at {root_path}")
+        
+        self.root_path = str(root_path)
+        self.mqtt_client = AWSIoTMQTTClient(node_id)
         self.subscription_messages = {}
         self.old_msgs = {}
         self.logger = logging.getLogger("mqtt_cli")
         self.connected = False
+        self.last_ping = 0
+        self.ping_interval = 30  # Check connection every 30 seconds
+
+        # Disable all AWS IoT SDK logging
+        for logger_name in ['AWSIoTPythonSDK', 
+                          'AWSIoTPythonSDK.core',
+                          'AWSIoTPythonSDK.core.protocol.internal.clients',
+                          'AWSIoTPythonSDK.core.protocol.mqtt_core',
+                          'AWSIoTPythonSDK.core.protocol.internal.workers',
+                          'AWSIoTPythonSDK.core.protocol.internal.defaults',
+                          'AWSIoTPythonSDK.core.protocol.internal.events']:
+            logging.getLogger(logger_name).setLevel(logging.ERROR)
 
         self._configure_mqtt_client()
 
     def _configure_mqtt_client(self):
-        """Configure MQTT client with certificates and options"""
-
-        cert = self.cert_folder / f"{self.node_id}.crt"
-        key = self.cert_folder / f"{self.node_id}.key"
-        root_ca = self.cert_folder / "root.pem"
-
-        for f in [cert, key, root_ca]:
-            if not f.exists():
+        """Configure MQTT client with certificate paths."""
+        for f in [self.cert_path, self.key_path, self.root_path]:
+            if not os.path.exists(f):
                 raise MQTTOperationsException(f"Certificate file not found: {f}")
 
         self.mqtt_client.configureEndpoint(self.broker, PORT)
-        self.mqtt_client.configureCredentials(str(root_ca), str(key), str(cert))
+        self.mqtt_client.configureCredentials(self.root_path, self.key_path, self.cert_path)
         self.mqtt_client.configureConnectDisconnectTimeout(CONNECT_DISCONNECT_TIMEOUT)
         self.mqtt_client.configureMQTTOperationTimeout(OPERATION_TIMEOUT)
-        self.mqtt_client.configureOfflinePublishQueueing(-1)
-        self.mqtt_client.configureDrainingFrequency(2)
+        self.mqtt_client.configureAutoReconnectBackoffTime(1, 32, 20)
+        self.mqtt_client.configureOfflinePublishQueueing(-1)  # Infinite publish queueing
+        self.mqtt_client.configureDrainingFrequency(2)  # Draining: 2 Hz
+        self.mqtt_client.configureConnectDisconnectTimeout(10)  # 10 sec
+        self.mqtt_client.configureMQTTOperationTimeout(30)  # 30 sec instead of 5 sec
+
+    def _check_connection(self):
+        """Check connection status by attempting to publish to a test topic."""
+        try:
+            # Only check every ping_interval seconds
+            current_time = time.time()
+            if current_time - self.last_ping < self.ping_interval:
+                return self.connected
+                
+            # Try to publish to a test topic
+            test_topic = f"$aws/things/{self.node_id}/ping"
+            result = self.mqtt_client.publish(test_topic, "", 0)
+            
+            self.connected = bool(result)
+            self.last_ping = current_time
+            return self.connected
+            
+        except Exception as e:
+            self.connected = False
+            return False
 
     def connect(self):
         """Connect to MQTT broker with status tracking"""
@@ -63,7 +99,7 @@ class MQTTOperations:
                 result = self.mqtt_client.connect()
                 if result:
                     self.connected = True
-                    self.logger.info(f"Connected to broker {self.broker}")
+                    self.last_ping = time.time()
                 return result
             return True
         except Exception as e:
@@ -75,64 +111,104 @@ class MQTTOperations:
             result = self.mqtt_client.disconnect()
             if result:
                 self.connected = False
-                self.logger.info(f"Disconnected from broker {self.broker}")
             return result
         except Exception as e:
             raise MQTTOperationsException(f"Failed to disconnect: {str(e)}")
 
     def is_connected(self):
         """Check if currently connected"""
-        return self.connected
+        return self._check_connection()
 
-    def publish(self, topic, payload, qos=1, retry=2):
+    def publish(self, topic, payload, qos=1):
         """Publish message with retry logic and optional serialization"""
         try:
-            if not self.connected:
+            if not self.is_connected():
                 self.connect()
 
-            if not isinstance(payload, (str, int, float, bytearray, type(None))):
+            if isinstance(payload, (dict, list)):
                 payload = json.dumps(payload)
 
-            for attempt in range(retry + 1):
-                try:
-                    result = self.mqtt_client.publish(topic, payload, qos)
-                    if result:
-                        self.logger.info(f"Published to {topic}: {payload}")
-                        return PublishResult(success=True)
-                    if attempt < retry:
-                        time.sleep(2 ** attempt)
-                except Exception as e:
-                    if attempt == retry:
-                        raise
-                    time.sleep(2 ** attempt)
-            return PublishResult(success=False)
+            # Use QoS 0 for status updates to avoid waiting for acknowledgment
+            if 'otastatus' in topic:
+                qos = 0
+
+            result = self.mqtt_client.publish(topic, payload, qos)
+            if result:
+                # Only log at debug level
+                self.logger.debug(f"Published to {topic}: {payload}")
+            return result
         except Exception as e:
             self.logger.error(f"Publish failed: {str(e)}")
             raise MQTTOperationsException(f"Publish failed: {str(e)}")
 
     def subscribe(self, topic, qos=1, callback=None):
+        """Subscribe to a topic"""
         try:
-            cb = callback or self._on_message
-            result = self.mqtt_client.subscribe(topic, qos, cb)
+            if not self.is_connected():
+                self.connect()
+
+            if callback is None:
+                callback = self._on_message
+
+            # Ensure QoS is an integer
+            qos = int(qos)
+            
+            # Subscribe with proper parameter order for AWSIoTMQTTClient
+            result = self.mqtt_client.subscribe(topic, qos, callback)
             if result:
-                self.logger.info(f"Subscribed to {topic}")
+                # Only log at debug level
+                self.logger.debug(f"Subscribed to {topic}")
             return result
         except Exception as e:
+            self.logger.error(f"Subscribe failed: {str(e)}")
             raise MQTTOperationsException(f"Subscribe failed: {str(e)}")
 
     def unsubscribe(self, topic):
+        """Unsubscribe from a topic"""
         try:
             result = self.mqtt_client.unsubscribe(topic)
             if result:
-                self.logger.info(f"Unsubscribed from {topic}")
+                # Only log at debug level
+                self.logger.debug(f"Unsubscribed from {topic}")
             return result
         except Exception as e:
             raise MQTTOperationsException(f"Unsubscribe failed: {str(e)}")
 
     def _on_message(self, client, userdata, message):
-        self.subscription_messages[message.topic] = message.payload
-        self.logger.info(f"Received on {message.topic}: {message.payload}")
-        self.old_msgs.setdefault(message.topic, []).append(message.payload) 
+        """Default message callback"""
+        try:
+            payload = json.loads(message.payload.decode())
+            self.subscription_messages[message.topic] = payload
+            self.logger.info(json.dumps(payload, indent=2))
+            self.old_msgs.setdefault(message.topic, []).append(payload)
+        except json.JSONDecodeError:
+            self.logger.warning(f"Non-JSON message received: {message.payload.decode()}")
+            self.subscription_messages[message.topic] = message.payload.decode()
+            self.old_msgs.setdefault(message.topic, []).append(message.payload.decode())
+
+    def reconnect(self) -> bool:
+        """Attempt to reconnect to MQTT broker."""
+        try:
+            self.disconnect()
+            time.sleep(1)  # Brief delay before reconnecting
+            return self.connect()
+        except Exception:
+            return False
+
+    def ping(self) -> bool:
+        """Check if connection is alive and ping if needed."""
+        try:
+            current_time = time.time()
+            if current_time - self.last_ping >= self.ping_interval:
+                # Publish a ping message to a temporary topic
+                ping_topic = f"node/{self.node_id}/ping"
+                if self.mqtt_client.publish(ping_topic, json.dumps({"timestamp": current_time}), 0):
+                    self.last_ping = current_time
+                    return True
+                return False
+            return True
+        except Exception:
+            return False
 
 
 class PublishResult:

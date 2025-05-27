@@ -1,0 +1,22 @@
+{
+  "broker": "a3q0b7ncspt14l-ats.iot.us-east-1.amazonaws.com",
+  "nodes": {
+    "eNpBDYZQLqEyqtdF246JbQ": {
+      "cert_path": "/Users/esp/Projects/certs/node_details/node-000002-eNpBDYZQLqEyqtdF246JbQ/node.crt",
+      "key_path": "/Users/esp/Projects/certs/node_details/node-000002-eNpBDYZQLqEyqtdF246JbQ/node.key"
+    },
+    "5W6mt6BFxBYcdb4Xsdj7C5": {
+      "cert_path": "/Users/esp/Projects/certs/node_details/node-000004-5W6mt6BFxBYcdb4Xsdj7C5/node.crt",
+      "key_path": "/Users/esp/Projects/certs/node_details/node-000004-5W6mt6BFxBYcdb4Xsdj7C5/node.key"
+    },
+    "NW43uXFBADfDrGEHDHnaC3": {
+      "cert_path": "/Users/esp/Projects/certs/node_details/node-000003-NW43uXFBADfDrGEHDHnaC3/node.crt",
+      "key_path": "/Users/esp/Projects/certs/node_details/node-000003-NW43uXFBADfDrGEHDHnaC3/node.key"
+    },
+    "KgGYVf47fbLC6rGJARGVHa": {
+      "cert_path": "/Users/esp/Projects/certs/node_details/node-000001-KgGYVf47fbLC6rGJARGVHa/node.crt",
+      "key_path": "/Users/esp/Projects/certs/node_details/node-000001-KgGYVf47fbLC6rGJARGVHa/node.key"
+    }
+  },
+  "admin_cli_path": "/Users/esp/Projects/certs"
+}

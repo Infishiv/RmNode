@@ -1,0 +1,10 @@
+{
+  "active_node": "eNpBDYZQLqEyqtdF246JbQ",
+  "connections": {
+    "eNpBDYZQLqEyqtdF246JbQ": {
+      "broker": "a3q0b7ncspt14l-ats.iot.us-east-1.amazonaws.com",
+      "cert_path": "/Users/esp/Projects/certs/node_details/node-000002-eNpBDYZQLqEyqtdF246JbQ/node.crt",
+      "key_path": "/Users/esp/Projects/certs/node_details/node-000002-eNpBDYZQLqEyqtdF246JbQ/node.key"
+    }
+  }
+}
