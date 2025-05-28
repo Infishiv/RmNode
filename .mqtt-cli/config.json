@@ -2,5 +2,5 @@
   "broker": "mqtt://a1p72mufdu6064-ats.iot.us-east-1.amazonaws.com/mqttproduction",
   "nodes": {
   },
-  "admin_cli_path": "/Users/esp/Projects/certs"
+  "admin_cli_path": ""
 }
