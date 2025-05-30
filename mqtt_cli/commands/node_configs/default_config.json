@@ -1,0 +1,39 @@
+{
+    "node_id": "NODE_ID_PLACEHOLDER",
+    "config_version": "2021-09-13",
+    "info": {
+        "name": "ESP RainMaker Nods",
+        "type": "esp32c3",
+        "model": "ESP32-DevKitsss",
+        "fw_version": "1.0.0",
+        "project_name": "ESP RainMaker"
+    },
+    "devices": [
+        {
+            "name": "Light",
+            "type": "esp.device.light",
+            "primary": "power",
+            "params": [
+                {
+                    "name": "power",
+                    "type": "esp.param.power",
+                    "data_type": "bool",
+                    "properties": ["read", "write"],
+                    "ui_type": "esp.ui.toggle"
+                },
+                {
+                    "name": "brightness",
+                    "type": "esp.param.brightness",
+                    "data_type": "int",
+                    "properties": ["read", "write"],
+                    "ui_type": "esp.ui.slider",
+                    "bounds": {
+                        "min": 0,
+                        "max": 100,
+                        "step": 1
+                    }
+                }
+            ]
+        }
+    ]
+} 

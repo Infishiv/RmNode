@@ -4,34 +4,47 @@ Device management commands for MQTT CLI.
 import click
 import json
 import asyncio
+import sys
+import uuid
+import logging
 from ..utils.exceptions import MQTTError, MQTTConnectionError
 from ..utils.validators import validate_node_id
 from ..commands.connection import connect_node
 from ..utils.config_manager import ConfigManager
 from ..mqtt_operations import MQTTOperations
+from ..utils.debug_logger import debug_log, debug_step
 import time
+
+# Get logger for this module
+logger = logging.getLogger(__name__)
 
 @click.group()
 def device():
     """Device management commands."""
     pass
 
+@debug_step("Ensuring node connection")
 async def ensure_node_connection(ctx, node_id: str) -> bool:
     """Ensure connection to a node is active, connect if needed."""
     try:
         # Get config manager
+        logger.debug(f"Getting config manager for node {node_id}")
         config_manager = ConfigManager(ctx.obj['CONFIG_DIR'])
         cert_paths = config_manager.get_node_paths(node_id)
         if not cert_paths:
+            logger.debug(f"Node {node_id} not found in configuration")
             click.echo(click.style(f"✗ Node {node_id} not found in configuration", fg='red'), err=True)
             return False
             
         cert_path, key_path = cert_paths
+        logger.debug(f"Found certificates for node {node_id}")
         
         # Get broker URL from config
         broker_url = config_manager.get_broker()
+        logger.debug(f"Using broker URL: {broker_url}")
         
         # Create new MQTT client
+        logger.debug("Initializing MQTT client")
         mqtt_client = MQTTOperations(
             broker=broker_url,
             node_id=node_id,
@@ -40,220 +53,178 @@ async def ensure_node_connection(ctx, node_id: str) -> bool:
         )
         
         # Connect
+        logger.debug("Attempting to connect")
         if mqtt_client.connect():
+            logger.debug("Connection successful")
             ctx.obj['MQTT'] = mqtt_client
             return True
+        logger.debug("Connection failed")
         return False
     except Exception as e:
+        logger.debug(f"Connection error: {str(e)}")
         click.echo(click.style(f"✗ Connection error: {str(e)}", fg='red'), err=True)
         return False
 
-def load_device_config(device_type: str) -> dict:
-    """Load device configuration from config files."""
-    try:
-        with open(f"device_configs/{device_type}_config.json", 'r') as f:
-            return json.load(f)
-    except FileNotFoundError:
-        raise MQTTError(f"Configuration file for {device_type} not found")
+@debug_step("Formatting TLV message")
+def format_tlv_message(request_id: str, role: int, command: int, data: dict = None) -> dict:
+    """Format message in TLV format according to ESP RainMaker spec."""
+    logger.debug(f"Creating TLV message with request_id={request_id}, role={role}, command={command}")
+    message = {
+        "1": request_id,  # T:1 - Request ID
+        "2": int(role),   # T:2 - Role (1=admin, 2=primary, 4=secondary)
+        "5": command      # T:5 - Command
+    }
+    if data:
+        logger.debug(f"Adding command data to TLV message: {data}")
+        message["6"] = data  # T:6 - Command data (optional)
+    return message
 
-def load_device_params(device_type: str) -> dict:
-    """Load device parameters from params files."""
-    try:
-        with open(f"device_configs/{device_type}_params.json", 'r') as f:
-            return json.load(f)
-    except FileNotFoundError:
-        raise MQTTError(f"Parameters file for {device_type} not found")
-
-@device.command('make')
-@click.option('--node-id', required=True, help='Node ID to configure')
-@click.option('--type', 'device_type', required=True, type=click.Choice(['light', 'washer', 'heater'], case_sensitive=False), help='Type of device to create')
+@device.command('send-command')
+@click.option('--node-id', required=True, help='Node ID')
+@click.option('--request-id', help='Unique request ID (generated if not provided)')
+@click.option('--role', type=click.Choice(['1', '2', '4']), required=True, 
+              help='User role (1=admin, 2=primary, 4=secondary)')
+@click.option('--command', type=int, required=True,
+              help='Command code (0=get pending, 16=request file upload, 17=get file download, 20=confirm upload)')
+@click.option('--command-data', help='Optional command data as JSON string')
 @click.pass_context
-def make_device(ctx, node_id: str, device_type: str):
-    """Create a new device of specified type.
+@debug_log
+def send_node_command(ctx, node_id: str, request_id: str, role: str, command: int, command_data: str):
+    """Send command to node using TLV format.
     
-    Example: mqtt-cli device make --node-id node123 --type light
+    Example: mqtt-cli device send-command --node-id node123 --role 1 --command 0
     """
     try:
         # Create event loop for async operations
+        logger.debug("Creating event loop for async operations")
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         
         # Ensure connection
+        logger.debug(f"Ensuring connection to node {node_id}")
         if not loop.run_until_complete(ensure_node_connection(ctx, node_id)):
             click.echo(click.style("✗ Failed to connect", fg='red'), err=True)
-            raise click.Abort()
+            sys.exit(1)
             
         mqtt_client = ctx.obj.get('MQTT')
         if not mqtt_client:
+            logger.debug("No active MQTT connection found")
             click.echo(click.style("✗ No MQTT client available", fg='red'), err=True)
-            raise click.Abort()
+            sys.exit(1)
+
+        # Generate request ID if not provided
+        if not request_id:
+            request_id = str(uuid.uuid4())[:22]  # First 22 chars of UUID
+            logger.debug(f"Generated request ID: {request_id}")
+
+        # Parse command data if provided
+        data = None
+        if command_data:
+            try:
+                logger.debug(f"Parsing command data: {command_data}")
+                data = json.loads(command_data)
+            except json.JSONDecodeError:
+                logger.debug("Invalid JSON in command data")
+                raise MQTTError("Invalid JSON in command data")
+
+        # Format TLV message
+        logger.debug("Formatting TLV message")
+        message = format_tlv_message(request_id, role, command, data)
         
-        # Load device configuration and parameters
-        config = load_device_config(device_type.lower())
-        params = load_device_params(device_type.lower())
-        
-        # Update node_id in config
-        config['node_id'] = node_id
-        
-        # Publish device configuration
-        config_topic = f"node/{node_id}/config"
-        if mqtt_client.publish(config_topic, json.dumps(config), qos=1):
-            click.echo(click.style(f"✓ Published device configuration", fg='green'))
-            click.echo(json.dumps(config, indent=2))
+        # Publish command
+        topic = f"node/{node_id}/to-node"
+        logger.debug(f"Publishing command to topic: {topic}")
+        if mqtt_client.publish(topic, json.dumps(message), qos=1):
+            logger.debug("Command published successfully")
+            click.echo(click.style(f"✓ Sent command to node {node_id}", fg='green'))
+            click.echo("\nCommand Details:")
+            click.echo("-" * 40)
+            click.echo(f"Request ID: {request_id}")
+            click.echo(f"Role: {role}")
+            click.echo(f"Command: {command}")
+            if data:
+                click.echo("\nCommand Data:")
+                click.echo(json.dumps(data, indent=2))
+            click.echo("-" * 40)
+            return 0
         else:
-            raise MQTTError("Failed to publish device configuration")
+            logger.debug("Failed to publish command")
+            raise MQTTError("Failed to send command")
             
-        # Publish initial parameters
-        params_topic = f"node/{node_id}/params"
-        if mqtt_client.publish(params_topic, json.dumps(params), qos=1):
-            click.echo(click.style(f"✓ Published device parameters", fg='green'))
-            click.echo(json.dumps(params, indent=2))
-        else:
-            raise MQTTError("Failed to publish device parameters")
-            
-        # Update current state
-        try:
-            with open("device_configs/current_state.json", 'r+') as f:
-                state = json.load(f)
-                state['current_device'] = device_type.lower()
-                state['current_config'] = config
-                state['current_params'] = params
-                f.seek(0)
-                json.dump(state, f, indent=2)
-                f.truncate()
-        except Exception as e:
-            click.echo(click.style(f"Warning: Failed to update current state: {str(e)}", fg='yellow'))
-        
     except MQTTError as e:
-        click.echo(click.style(f"✗ Failed to create device: {str(e)}", fg='red'), err=True)
-        raise click.Abort()
+        logger.debug(f"MQTT error in send_node_command: {str(e)}")
+        click.echo(click.style(f"✗ Failed to send command: {str(e)}", fg='red'), err=True)
+        sys.exit(1)
     except Exception as e:
+        logger.debug(f"Error in send_node_command: {str(e)}")
         click.echo(click.style(f"✗ Error: {str(e)}", fg='red'), err=True)
-        raise click.Abort()
+        sys.exit(1)
 
-@device.command('set-param')
-@click.option('--node-id', required=True, help='Node ID to configure')
-@click.option('--device-name', required=True, help='Name of the device')
-@click.option('--param', required=True, help='Parameter name to set')
-@click.option('--value', required=True, help='Value to set')
+@device.command('send-alert')
+@click.option('--node-id', required=True, help='Node ID')
+@click.option('--message', required=True, help='Alert message')
+@click.option('--basic-ingest', is_flag=True, help='Use basic ingest topic ($aws/rules/esp_node_alert/...) to save costs')
 @click.pass_context
-def set_param(ctx, node_id: str, device_name: str, param: str, value: str):
-    """Set a device parameter.
+@debug_log
+def send_alert(ctx, node_id: str, message: str, basic_ingest: bool):
+    """Send alert message from node.
     
-    Example: mqtt-cli device set-param --node-id node123 --device-name light --param power --value on
+    Example: mqtt-cli device send-alert --node-id node123 --message "Temperature high!"
+    Or with basic ingest: mqtt-cli device send-alert --node-id node123 --message "Alert!" --basic-ingest
     """
     try:
         # Create event loop for async operations
+        logger.debug("Creating event loop for async operations")
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         
         # Ensure connection
+        logger.debug(f"Ensuring connection to node {node_id}")
         if not loop.run_until_complete(ensure_node_connection(ctx, node_id)):
             click.echo(click.style("✗ Failed to connect", fg='red'), err=True)
-            raise click.Abort()
+            sys.exit(1)
             
         mqtt_client = ctx.obj.get('MQTT')
         if not mqtt_client:
+            logger.debug("No active MQTT connection found")
             click.echo(click.style("✗ No MQTT client available", fg='red'), err=True)
-            raise click.Abort()
-        
-        # Prepare parameter update
-        params = {
-            device_name: {
-                param: value
-            }
+            sys.exit(1)
+
+        # Prepare alert payload
+        logger.debug(f"Preparing alert payload for node {node_id}")
+        alert = {
+            "node_id": node_id,
+            "message": message,
+            "timestamp": int(time.time() * 1000)
         }
         
-        # Publish parameter update
-        topic = f"node/{node_id}/params"
-        if mqtt_client.publish(topic, json.dumps(params), qos=1):
-            click.echo(click.style(f"✓ Set {device_name} {param} to {value}", fg='green'))
-            click.echo(json.dumps(params, indent=2))
+        # Choose topic based on ingest type
+        if basic_ingest:
+            topic = f"$aws/rules/esp_node_alert/{node_id}"
+            logger.debug(f"Using basic ingest topic: {topic}")
         else:
-            raise MQTTError("Failed to publish parameter update")
+            topic = f"node/{node_id}/alert"
+            logger.debug(f"Using standard alert topic: {topic}")
             
-        # Update current state
-        try:
-            with open("device_configs/current_state.json", 'r+') as f:
-                state = json.load(f)
-                if 'current_params' not in state:
-                    state['current_params'] = {}
-                if device_name not in state['current_params']:
-                    state['current_params'][device_name] = {}
-                state['current_params'][device_name][param] = value
-                f.seek(0)
-                json.dump(state, f, indent=2)
-                f.truncate()
-        except Exception as e:
-            click.echo(click.style(f"Warning: Failed to update current state: {str(e)}", fg='yellow'))
-        
-    except MQTTError as e:
-        click.echo(click.style(f"✗ Failed to set parameter: {str(e)}", fg='red'), err=True)
-        raise click.Abort()
-    except Exception as e:
-        click.echo(click.style(f"✗ Error: {str(e)}", fg='red'), err=True)
-        raise click.Abort()
-
-@device.command('show')
-@click.option('--node-id', required=True, help='Node ID to show')
-@click.option('--device-name', required=True, help='Name of the device to show')
-@click.pass_context
-def show_device(ctx, node_id: str, device_name: str):
-    """Show device status.
-    
-    Example: mqtt-cli device show --node-id node123 --device-name light
-    """
-    try:
-        # Create event loop for async operations
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        # Ensure connection
-        if not loop.run_until_complete(ensure_node_connection(ctx, node_id)):
-            click.echo(click.style("✗ Failed to connect", fg='red'), err=True)
-            raise click.Abort()
+        # Publish alert
+        logger.debug("Publishing alert message")
+        if mqtt_client.publish(topic, json.dumps(alert), qos=1):
+            logger.debug("Alert published successfully")
+            click.echo(click.style(f"✓ Sent alert from node {node_id}", fg='green'))
+            click.echo("\nAlert Details:")
+            click.echo("-" * 40)
+            click.echo(json.dumps(alert, indent=2))
+            click.echo("-" * 40)
+            return 0
+        else:
+            logger.debug("Failed to publish alert")
+            raise MQTTError("Failed to send alert")
             
-        mqtt_client = ctx.obj.get('MQTT')
-        if not mqtt_client:
-            click.echo(click.style("✗ No MQTT client available", fg='red'), err=True)
-            raise click.Abort()
-        
-        # Subscribe to status updates
-        status_topic = f"node/{node_id}/params"
-        
-        def on_message(client, userdata, message):
-            try:
-                params = json.loads(message.payload.decode())
-                if device_name in params:
-                    click.echo("\nDevice Status:")
-                    click.echo("-" * 20)
-                    for param, value in params[device_name].items():
-                        click.echo(f"{param}: {value}")
-                    click.echo("-" * 20)
-                else:
-                    click.echo(click.style(f"✗ No status found for device {device_name}", fg='yellow'))
-            except json.JSONDecodeError:
-                click.echo(click.style("✗ Invalid status format", fg='red'), err=True)
-
-        # Subscribe using the standard subscribe method
-        mqtt_client.subscribe(status_topic, qos=1, callback=on_message)
-        
-        # Request status update
-        request_topic = f"node/{node_id}/get/params"
-        mqtt_client.publish(request_topic, "", qos=1)
-        
-        click.echo(f"Waiting for {device_name} status...")
-        
-        # Keep the script running to receive messages
-        try:
-            while True:
-                time.sleep(0.1)
-        except KeyboardInterrupt:
-            click.echo("\nStopped monitoring device status")
-        
     except MQTTError as e:
-        click.echo(click.style(f"✗ Failed to get device status: {str(e)}", fg='red'), err=True)
-        raise click.Abort()
+        logger.debug(f"MQTT error in send_alert: {str(e)}")
+        click.echo(click.style(f"✗ Failed to send alert: {str(e)}", fg='red'), err=True)
+        sys.exit(1)
     except Exception as e:
+        logger.debug(f"Error in send_alert: {str(e)}")
         click.echo(click.style(f"✗ Error: {str(e)}", fg='red'), err=True)
-        raise click.Abort() 
+        sys.exit(1) 

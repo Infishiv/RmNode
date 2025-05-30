@@ -1,16 +1,16 @@
 {
-  "current_device": "washer",
+  "current_device": "light",
   "current_config": {
     "attributes": [
       {
-        "name": "cmd-resp",
+        "name": "admin@espressif",
         "value": "1"
       }
     ],
-    "config_version": "2020-03-20",
+    "config_version": "2025-03-20",
     "devices": [
       {
-        "name": "Washer",
+        "name": "Light",
         "params": [
           {
             "data_type": "string",
@@ -22,56 +22,125 @@
             "type": "esp.param.name"
           },
           {
+            "data_type": "bool",
             "name": "Power",
-            "type": "esp.param.power",
-            "data_type": "bool",
-            "properties": [
-              "read",
-              "write"
-            ]
-          },
-          {
-            "name": "Running State",
-            "type": "esp.param.running-state",
-            "data_type": "bool",
-            "properties": [
-              "read",
-              "write"
-            ]
-          },
-          {
-            "name": "Paused",
-            "type": "esp.param.paused-state",
-            "data_type": "bool",
-            "properties": [
-              "read",
-              "write"
-            ]
-          },
-          {
-            "data_type": "string",
-            "name": "Run cycle",
             "properties": [
               "read",
               "write"
             ],
-            "type": " esp.param.run-cycle",
+            "type": "esp.param.power",
             "ui_type": "esp.ui.toggle"
+          },
+          {
+            "data_type": "float",
+            "name": "humidity",
+            "properties": [
+              "read",
+              "simple_ts"
+            ],
+            "type": "esp.param.humidity",
+            "ui_type": "esp.ui.text"
+          },
+          {
+            "data_type": "float",
+            "name": "temperature",
+            "properties": [
+              "read",
+              "simple_ts"
+            ],
+            "type": "esp.param.temperature",
+            "ui_type": "esp.ui.text"
+          },
+          {
+            "data_type": "int",
+            "name": "Integer_Data",
+            "properties": [
+              "read",
+              "simple_ts"
+            ],
+            "type": "esp.param.Integer_Data",
+            "ui_type": "esp.ui.text"
+          },
+          {
+            "data_type": "string",
+            "name": "String_Data",
+            "properties": [
+              "read",
+              "simple_ts"
+            ],
+            "type": "esp.param.String_Data",
+            "ui_type": "esp.ui.text"
+          },
+          {
+            "data_type": "bool",
+            "name": "Boolean_Data",
+            "properties": [
+              "read",
+              "time_series",
+              "simple_ts"
+            ],
+            "type": "esp.param.Boolean_Data",
+            "ui_type": "esp.ui.text"
+          },
+          {
+            "bounds": {
+              "max": 100,
+              "min": 0,
+              "step": 1
+            },
+            "data_type": "int",
+            "name": "Brightness",
+            "properties": [
+              "read",
+              "write"
+            ],
+            "type": "esp.param.brightness",
+            "ui_type": "esp.ui.slider"
+          },
+          {
+            "bounds": {
+              "max": 360,
+              "min": 0,
+              "step": 1
+            },
+            "data_type": "int",
+            "name": "Hue",
+            "properties": [
+              "read",
+              "write"
+            ],
+            "type": "esp.param.hue",
+            "ui_type": "esp.ui.hue-slider"
+          },
+          {
+            "bounds": {
+              "max": 100,
+              "min": 0,
+              "step": 1
+            },
+            "data_type": "int",
+            "name": "Saturation",
+            "properties": [
+              "read",
+              "write"
+            ],
+            "type": "esp.param.saturation",
+            "ui_type": "esp.ui.slider"
           }
         ],
         "primary": "Power",
-        "type": "esp.device.washer"
+        "type": "esp.device.lightbulb"
       }
     ],
     "info": {
       "fw_version": "1.0",
-      "model": "Washer",
+      "model": "led_light",
       "name": "ESP RainMaker Device",
-      "platform": "esp32C4",
-      "project_name": "GVA testing",
-      "type": "washer"
+      "platform": "esp32",
+      "project_name": "led_light",
+      "type": "Lightbulb"
     },
-    "node_id": "5W6mt6BFxBYcdb4Xsdj7C5",
+    "node_id": "9Lwp8b9oi6Aa7GKs7VUNjk",
     "services": [
       {
         "name": "Time",
@@ -164,10 +233,12 @@
     ]
   },
   "current_params": {
-    "Washer": {
-      "Name": "Washer",
-      "Power": "false",
-      "Paused": true
+    "Light": {
+      "Brightness": 5,
+      "Hue": 60,
+      "Name": "Light",
+      "Power": true,
+      "Saturation": 10
     }
   }
 }

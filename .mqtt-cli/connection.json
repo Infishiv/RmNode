@@ -1,10 +1,20 @@
 {
-  "active_node": "eNpBDYZQLqEyqtdF246JbQ",
+  "active_node": "WKU4YLZdbm9stR8BtQ5Xqk",
   "connections": {
     "eNpBDYZQLqEyqtdF246JbQ": {
       "broker": "a3q0b7ncspt14l-ats.iot.us-east-1.amazonaws.com",
-      "cert_path": "/Users/esp/Projects/certs/node_details/node-000002-eNpBDYZQLqEyqtdF246JbQ/node.crt",
-      "key_path": "/Users/esp/Projects/certs/node_details/node-000002-eNpBDYZQLqEyqtdF246JbQ/node.key"
+      "cert_path": "/Users/esp/Projects/cert/certs/node_details/node-000002-eNpBDYZQLqEyqtdF246JbQ/node.crt",
+      "key_path": "/Users/esp/Projects/cert/certs/node_details/node-000002-eNpBDYZQLqEyqtdF246JbQ/node.key"
+    },
+    "bEniW4ArMDhj5GrkX8CYM6": {
+      "broker": "a3q0b7ncspt14l-ats.iot.us-east-1.amazonaws.com",
+      "cert_path": "/Users/esp/Projects/cert/cert2/node_details/node-000003-bEniW4ArMDhj5GrkX8CYM6/node.crt",
+      "key_path": "/Users/esp/Projects/cert/cert2/node_details/node-000003-bEniW4ArMDhj5GrkX8CYM6/node.key"
+    },
+    "WKU4YLZdbm9stR8BtQ5Xqk": {
+      "broker": "a3q0b7ncspt14l-ats.iot.us-east-1.amazonaws.com",
+      "cert_path": "/Users/esp/Projects/cert/cert2/node_details/node-000010-WKU4YLZdbm9stR8BtQ5Xqk/node.crt",
+      "key_path": "/Users/esp/Projects/cert/cert2/node_details/node-000010-WKU4YLZdbm9stR8BtQ5Xqk/node.key"
     }
   }
 }

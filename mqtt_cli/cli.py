@@ -3,6 +3,7 @@ MQTT CLI - A command-line interface for MQTT operations.
 """
 import click
 import logging
+import sys
 from pathlib import Path
 from .utils.connection_manager import ConnectionManager
 from .utils.config_manager import ConfigManager
@@ -10,7 +11,7 @@ from .utils.config_manager import ConfigManager
 # Configure logging - only show errors by default
 logging.basicConfig(
     level=logging.ERROR,  # Changed from INFO to ERROR
-    format='%(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 
 # Disable AWS IoT SDK logging except for errors
@@ -37,34 +38,58 @@ from .commands.config import config
 @click.option('--config-dir', 
               type=click.Path(file_okay=False, dir_okay=True),
               help='Configuration directory path')
+@click.option('--debug', is_flag=True, help='Enable debug mode with detailed logging')
 @click.pass_context
-def cli(ctx, config_dir):
+def cli(ctx, config_dir, debug):
     """MQTT CLI - A command-line interface for MQTT operations."""
-    # Initialize context object
-    ctx.ensure_object(dict)
-    
-    # Set up configuration directory
-    if config_dir:
-        ctx.obj['CONFIG_DIR'] = Path(config_dir)
-    else:
-        ctx.obj['CONFIG_DIR'] = Path('.mqtt-cli')
+    try:
+        # Initialize context object
+        ctx.ensure_object(dict)
         
-    # Create config directory if it doesn't exist
-    ctx.obj['CONFIG_DIR'].mkdir(parents=True, exist_ok=True)
-    
-    # Set default broker and paths
-    ctx.obj['BROKER'] = "a3q0b7ncspt14l-ats.iot.us-east-1.amazonaws.com"
-    ctx.obj['CERT_FOLDER'] = "certs"
+        # Configure logging based on debug flag
+        if debug:
+            # Set root logger to DEBUG
+            logging.getLogger().setLevel(logging.DEBUG)
+            # Enable debug logging for AWS IoT SDK
+            for logger_name in ['AWSIoTPythonSDK', 
+                              'AWSIoTPythonSDK.core',
+                              'AWSIoTPythonSDK.core.protocol.internal.clients',
+                              'AWSIoTPythonSDK.core.protocol.mqtt_core',
+                              'AWSIoTPythonSDK.core.protocol.internal.workers',
+                              'AWSIoTPythonSDK.core.protocol.internal.defaults',
+                              'AWSIoTPythonSDK.core.protocol.internal.events']:
+                logging.getLogger(logger_name).setLevel(logging.DEBUG)
+            click.echo("Debug mode enabled - detailed logging activated")
+        
+        # Set up configuration directory
+        if config_dir:
+            ctx.obj['CONFIG_DIR'] = Path(config_dir)
+        else:
+            ctx.obj['CONFIG_DIR'] = Path('.mqtt-cli')
+            
+        # Create config directory if it doesn't exist
+        ctx.obj['CONFIG_DIR'].mkdir(parents=True, exist_ok=True)
+        
+        # Set default broker and paths
+        ctx.obj['BROKER'] = "a3q0b7ncspt14l-ats.iot.us-east-1.amazonaws.com"
+        ctx.obj['CERT_FOLDER'] = "certs"
 
-    # Initialize configuration manager
-    config_manager = ConfigManager(ctx.obj['CONFIG_DIR'])
-    
-    # Initialize connection manager
-    conn_manager = ConnectionManager(ctx.obj['CONFIG_DIR'])
-    
-    # Store managers in context
-    ctx.obj['CONFIG_MANAGER'] = config_manager
-    ctx.obj['CONNECTION_MANAGER'] = conn_manager
+        # Initialize configuration manager
+        config_manager = ConfigManager(ctx.obj['CONFIG_DIR'])
+        
+        # Initialize connection manager
+        conn_manager = ConnectionManager(ctx.obj['CONFIG_DIR'])
+        
+        # Store managers in context
+        ctx.obj['CONFIG_MANAGER'] = config_manager
+        ctx.obj['CONNECTION_MANAGER'] = conn_manager
+        
+        # Store debug flag in context for other commands to access
+        ctx.obj['DEBUG'] = debug
+        
+    except Exception as e:
+        click.echo(f"Initialization error: {str(e)}", err=True)
+        sys.exit(1)
 
 # Register command groups
 cli.add_command(connection)  # Basic MQTT connection management
@@ -77,4 +102,9 @@ cli.add_command(tsdata)      # Time series data operations
 cli.add_command(config)      # Configuration management
     
 if __name__ == '__main__':
-    cli()
+    try:
+        cli(obj={})
+    except Exception as e:
+        click.echo(f"Error: {str(e)}", err=True)
+        sys.exit(1)
+    sys.exit(0)

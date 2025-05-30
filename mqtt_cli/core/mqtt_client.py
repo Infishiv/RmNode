@@ -2,6 +2,7 @@
 MQTT client operations for MQTT CLI.
 """
 import click
+import sys
 from ..mqtt_operations import MQTTOperations
 from ..utils.cert_finder import get_cert_and_key_paths
 
@@ -34,7 +35,7 @@ def get_active_mqtt_client(ctx, auto_connect=False, node_id=None):
         
         if error:
             click.echo(click.style(f"✗ Auto-connect failed: {error}", fg='red'), err=True)
-            raise click.Abort()
+            sys.exit(1)
         
         connection_manager.add_connection(node_id, mqtt_client)
         ctx.obj['NODE_ID'] = node_id
@@ -42,13 +43,13 @@ def get_active_mqtt_client(ctx, auto_connect=False, node_id=None):
 
     if 'NODE_ID' not in ctx.obj:
         click.echo(click.style("✗ No active node connection", fg='red'), err=True)
-        raise click.Abort()
+        sys.exit(1)
 
     node_id = ctx.obj['NODE_ID']
     mqtt_client = connection_manager.get_connection(node_id)
     
     if not mqtt_client:
         click.echo(click.style(f"✗ No connection found for active node {node_id}", fg='red'), err=True)
-        raise click.Abort()
+        sys.exit(1)
 
     return mqtt_client 

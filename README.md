@@ -9,6 +9,8 @@ A command-line interface for MQTT operations with AWS IoT Core integration, feat
 - **Multi-Node Support**: Added support for parallel operations on multiple nodes using comma-separated node IDs
 - **Improved Error Handling**: Better error messages and validation for all commands
 - **Standardized Command Structure**: Consistent command patterns across all operations
+- **Dynamic Configuration**: Added support for dynamic node configuration and parameter management
+- **Group Operations**: Support for group parameter updates across multiple nodes
 
 ### Key Features
 - Support for both single and multiple node operations
@@ -16,30 +18,36 @@ A command-line interface for MQTT operations with AWS IoT Core integration, feat
 - Improved connection handling with explicit parameter validation
 - Better time series data management with Swagger compatibility
 - Standardized command-line interface across all operations
+- Dynamic node configuration with templates
+- Group parameter management support
 
 ## Project Structure
 ```
 mqtt_cli/
-├── commands/           # Command implementations
-│   ├── connection.py   # Connection management
-│   ├── messaging.py    # MQTT messaging
-│   ├── device.py      # Device management
-│   ├── ota.py         # OTA update handling
-│   ├── node.py        # Node configuration
-│   └── config.py      # Configuration management
-├── core/              # Core functionality
-│   ├── mqtt_client.py # MQTT client implementation
-│   └── utils.py       # Utility functions
-├── models/            # Data models
-└── cli.py            # Main CLI entry point
+├── commands/                # Command implementations
+│   ├── connection.py       # Connection management
+│   ├── messaging.py        # MQTT messaging
+│   ├── device.py          # Device management
+│   ├── ota.py             # OTA update handling
+│   ├── node_config.py     # Node configuration
+│   ├── time_series.py     # Time series data
+│   ├── user_mapping.py    # User mapping operations
+│   └── node_configs/      # Configuration templates
+│       ├── default_config.json
+│       └── default_params.json
+├── core/                   # Core functionality
+│   ├── mqtt_client.py     # MQTT client implementation
+│   └── utils.py           # Utility functions
+├── models/                 # Data models
+└── cli.py                 # Main CLI entry point
 ```
 
 ## Installation
 
 1. Clone the repository:
 ```bash
-git clone <repository-url>
-cd Mqtt_cli_v01
+git clone https://github.com/Infishiv/RmNode.git
+cd Rmnode
 ```
 
 2. Create and activate a virtual environment:
@@ -162,6 +170,67 @@ mqtt-cli ota status --node-id "node123" --status "in-progress" --job-id "job123"
 
 # Monitor OTA updates with automatic status updates
 mqtt-cli ota monitor --node-id "node123" --auto-status
+```
+
+## Node Configuration and Parameters
+
+```bash
+# Set node configuration using stored template
+mqtt-cli node config --node-id "node123" --use-stored
+
+# Set node configuration with custom name
+mqtt-cli node config --node-id "node123" --use-stored --name "Living Room Node"
+
+# Set node configuration from file
+mqtt-cli node config --node-id "node123" --config-file "custom_config.json"
+
+# Initialize node parameters
+mqtt-cli node init-params --node-id "node123" --use-stored
+mqtt-cli node init-params --node-id "node123" --params-file "init_params.json"
+
+# Update parameters for a group of nodes
+mqtt-cli node group-params --node-ids "node1,node2,node3" --params-file "group_params.json"
+mqtt-cli node group-params --node-ids "node1,node2" --use-stored
+
+# Set parameters for a specific device
+mqtt-cli node params --node-id "node123" --device-name "Light" --param "power" --value "on"
+```
+
+## Device Commands and Alerts
+
+```bash
+# Send TLV-formatted command to node
+mqtt-cli device send-command --node-id "node123" --role 1 --command 0
+mqtt-cli device send-command --node-id "node123" --role 2 --command 1 --command-data '{"param": "value"}'
+
+# Send alert from node
+mqtt-cli device send-alert --node-id "node123" --message "Temperature high!"
+mqtt-cli device send-alert --node-id "node123" --message "Alert!" --basic-ingest
+```
+
+## Time Series Data Management
+
+```bash
+# Send single time series data point
+mqtt-cli tsdata send "node123" "temperature" "25.5" --data-type float
+mqtt-cli tsdata send "node123" "power" "true" --data-type bool --simple
+
+# Send batch time series data
+mqtt-cli tsdata batch "node123" "temperature" "25.5" "26.0" "26.5" --interval 30
+mqtt-cli tsdata batch "node123" "humidity" "45" "48" "50" --data-type int --basic-ingest
+```
+
+## User-Node Mapping
+
+```bash
+# Map user to node with authentication
+mqtt-cli user map --node-id "node123" --user-id "user456" --secret-key "abc123"
+
+# Map user with timeout and reset
+mqtt-cli user map --node-id "node123" --user-id "user456" --secret-key "abc123" --timeout 600 --reset
+
+# Send user alert
+mqtt-cli user alert --node-id "node123" --message "System update required"
 ```
 
 ## Node Configuration
