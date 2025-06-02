@@ -21,7 +21,13 @@ logger = logging.getLogger(__name__)
 
 @click.group()
 def tsdata():
-    """Time series data commands for sending metrics to nodes."""
+    """Time series data commands for sending metrics to nodes.
+    
+    Examples:
+        mqtt-cli tsdata send --node-id node123 --param-name temperature --value 25.5
+        mqtt-cli tsdata send --node-id node123 --param-name status --value true --data-type bool
+        mqtt-cli tsdata batch --node-id node123 --param-name humidity --values 45 48 52 --interval 60
+    """
     pass
 
 @debug_step("Ensuring node connection")
@@ -62,9 +68,9 @@ async def ensure_node_connection(ctx, node_id: str) -> bool:
         return False
 
 @tsdata.command('send')
-@click.argument('node_id')
-@click.argument('param_name')
-@click.argument('value')
+@click.option('--node-id', required=True, help='ID of the target node')
+@click.option('--param-name', required=True, help='Name of the parameter to send')
+@click.option('--value', required=True, help='Value to send')
 @click.option('--data-type', '-t', type=click.Choice(['bool', 'int', 'float', 'string', 'array', 'object']), 
               default='float', help='Data type of the metric')
 @click.option('--simple', is_flag=True, help='Use simplified time series data format with lesser aggregations')
@@ -84,6 +90,11 @@ def send_tsdata(ctx, node_id, param_name, value, data_type, simple, expiry_days,
     - Sends full time series data with all aggregations
     - Supports multiple records and overwrite options
     - Uses version 2021-09-13 format
+
+    Examples:
+        mqtt-cli tsdata send --node-id node123 --param-name temperature --value 25.5
+        mqtt-cli tsdata send --node-id node123 --param-name status --value true --data-type bool --simple
+        mqtt-cli tsdata send --node-id node123 --param-name config --value '{"mode":"auto"}' --data-type object
     """
     try:
         # Create event loop for async operations
@@ -178,9 +189,9 @@ def send_tsdata(ctx, node_id, param_name, value, data_type, simple, expiry_days,
         sys.exit(1)
 
 @tsdata.command('batch')
-@click.argument('node_id')
-@click.argument('param_name')
-@click.argument('values', nargs=-1)
+@click.option('--node-id', required=True, help='ID of the target node')
+@click.option('--param-name', required=True, help='Name of the parameter to send')
+@click.option('--values', required=True, multiple=True, help='List of values to send')
 @click.option('--data-type', '-t', type=click.Choice(['bool', 'int', 'float', 'string', 'array', 'object']), 
               default='float', help='Data type of the metric (as per 2021-09-13 spec)')
 @click.option('--interval', default=30, help='Time interval between records in seconds')
@@ -196,6 +207,11 @@ def send_batch_tsdata(ctx, node_id, param_name, values, data_type, interval, bas
     
     The data will be sent using the full time series format with all aggregations enabled.
     For cost optimization, use the --basic-ingest flag to use the AWS Rules ingest topic.
+
+    Examples:
+        mqtt-cli tsdata batch --node-id node123 --param-name temperature --values 25.5 26.0 26.5 --interval 60
+        mqtt-cli tsdata batch --node-id node123 --param-name status --values true false true --data-type bool
+        mqtt-cli tsdata batch --node-id node123 --param-name config --values '{"mode":"auto"}' '{"mode":"manual"}' --data-type object
     """
     try:
         # Create event loop for async operations

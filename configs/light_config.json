@@ -135,10 +135,10 @@
         "model": "led_light",
         "name": "ESP RainMaker Device",
         "platform": "esp32",
-        "project_name": "led_light",
+        "project_name": "PROJECT_NAME_PLACEHOLDER",
         "type": "Lightbulb"
     },
-    "node_id": "9Lwp8b9oi6Aa7GKs7VUNjk",
+    "node_id": "NODE_ID_PLACEHOLDER",
     "services": [
         {
             "name": "Time",

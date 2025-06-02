@@ -1,6 +1,6 @@
 {
     "Washer": {
-        "Name":"Washer",
+        "Name": "Washer",
         "Power": true,
         "Paused": true
     }

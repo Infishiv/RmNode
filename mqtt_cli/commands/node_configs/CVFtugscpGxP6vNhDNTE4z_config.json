@@ -1,8 +1,8 @@
 {
-    "node_id": "NODE_ID_PLACEHOLDER",
+    "node_id": "CVFtugscpGxP6vNhDNTE4z",
     "config_version": "2021-09-13",
     "info": {
-        "name": "ESP RainMaker Nods",
+        "name": "ESP RainMaker Node-CVFtugscpGxP6vNhDNTE4z",
         "type": "esp32c3",
         "model": "ESP32-DevKitsss",
         "fw_version": "1.0.0",
@@ -18,14 +18,20 @@
                     "name": "power",
                     "type": "esp.param.power",
                     "data_type": "bool",
-                    "properties": ["read", "write"],
+                    "properties": [
+                        "read",
+                        "write"
+                    ],
                     "ui_type": "esp.ui.toggle"
                 },
                 {
                     "name": "brightness",
                     "type": "esp.param.brightness",
                     "data_type": "int",
-                    "properties": ["read", "write"],
+                    "properties": [
+                        "read",
+                        "write"
+                    ],
                     "ui_type": "esp.ui.slider",
                     "bounds": {
                         "min": 0,
@@ -36,4 +42,4 @@
             ]
         }
     ]
-} 
+}

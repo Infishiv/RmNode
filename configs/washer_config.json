@@ -66,10 +66,10 @@
         "model": "Washer",
         "name": "ESP RainMaker Device",
         "platform": "esp32C4",
-        "project_name": "GVA testing",
+        "project_name": "PROJECT_NAME_PLACEHOLDER",
         "type": "washer"
     },
-    "node_id": "9Lwp8b9oi6Aa7GKs7VUNjk",
+    "node_id": "NODE_ID_PLACEHOLDER",
     "services": [
         {
             "name": "Time",

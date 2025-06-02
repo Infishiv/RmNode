@@ -24,40 +24,49 @@ from ..utils.debug_logger import debug_log, debug_step
 # Get logger for this module
 logger = logging.getLogger(__name__)
 
-# Get the path to the node_configs directory
-CONFIGS_DIR = Path(__file__).parent / 'node_configs'
+# Get the path to the configs directory (parent directory of this file)
+CONFIGS_DIR = Path(__file__).parent.parent.parent / 'configs'
+
+DEVICE_TEMPLATES = {
+    'light': 'light_config.json',
+    'heater': 'heater_config.json',
+    'washer': 'washer_config.json'
+}
 
 @debug_step("Creating node configuration")
-def create_node_specific_config(node_id: str, name: str = None) -> dict:
-    """Create a node-specific configuration based on the default template.
+def create_node_specific_config(node_id: str, device_type: str, project_name: str = None) -> dict:
+    """Create a node-specific configuration based on the template.
     
     Args:
         node_id: The ID of the node
-        name: Optional name for the node (defaults to "ESP RainMaker Node-{node_id}")
+        device_type: Type of device (light, heater, washer)
+        project_name: Optional project name
         
     Returns:
         dict: Node-specific configuration
     """
-    default_config_path = CONFIGS_DIR / "default_config.json"
-    if not default_config_path.exists():
-        logger.debug("Default configuration template not found")
-        raise MQTTError("Default configuration template not found")
+    if device_type not in DEVICE_TEMPLATES:
+        logger.debug(f"Invalid device type: {device_type}")
+        raise MQTTError(f"Invalid device type. Choose from: {', '.join(DEVICE_TEMPLATES.keys())}")
+        
+    template_file = CONFIGS_DIR / DEVICE_TEMPLATES[device_type]
+    if not template_file.exists():
+        logger.debug(f"Template file not found: {template_file}")
+        raise MQTTError(f"Template file not found: {template_file}")
         
     try:
-        with open(default_config_path, 'r') as f:
+        with open(template_file, 'r') as f:
             config = json.load(f)
     except json.JSONDecodeError as e:
-        logger.debug(f"Invalid JSON in default config: {str(e)}")
-        raise MQTTError("Invalid default configuration template")
+        logger.debug(f"Invalid JSON in template: {str(e)}")
+        raise MQTTError("Invalid template configuration")
         
-    # Update node-specific fields
+    # Replace placeholders
     config['node_id'] = node_id
-    if name:
-        config['info']['name'] = name
-    else:
-        config['info']['name'] = f"ESP RainMaker Node-{node_id}"
+    if project_name:
+        config['info']['project_name'] = project_name
     
-    logger.debug(f"Created configuration for node {node_id}")
+    logger.debug(f"Created configuration for node {node_id} with device type {device_type}")
     return config
 
 @debug_step("Saving configuration")
@@ -177,17 +186,18 @@ def node():
 
 @node.command('config')
 @click.option('--node-id', required=True, help='Node ID to configure')
-@click.option('--config-file', type=click.Path(exists=True), help='JSON file containing node configuration')
-@click.option('--use-stored', is_flag=True, help='Use stored configuration for the node')
-@click.option('--name', help='Custom name for the node (only used with --use-stored)')
+@click.option('--device-type', type=click.Choice(['light', 'heater', 'washer']), required=True, 
+              help='Type of device to configure')
+@click.option('--config-file', type=click.Path(exists=True), help='Custom JSON file containing node configuration')
+@click.option('--project-name', help='Project name for the device')
 @click.pass_context
 @debug_log
-def set_config(ctx, node_id, config_file, use_stored, name):
-    """Set node configuration.
+def set_config(ctx, node_id, device_type, config_file, project_name):
+    """Set node configuration using predefined templates.
     
-    Example: mqtt-cli node config --node-id node123 --config-file config.json
-    Or use stored config: mqtt-cli node config --node-id node123 --use-stored
-    Or with custom name: mqtt-cli node config --node-id node123 --use-stored --name "Living Room Node"
+    Examples:
+        mqtt-cli node config --node-id node123 --device-type light --project-name "Smart Home"
+        mqtt-cli node config --node-id node123 --device-type heater --config-file custom_config.json
     """
     try:
         # Create event loop for async operations
@@ -207,32 +217,15 @@ def set_config(ctx, node_id, config_file, use_stored, name):
             sys.exit(1)
 
         # Get configuration
-        if use_stored:
-            try:
-                logger.debug("Using stored configuration")
-                # If name is provided, create a new config with that name
-                if name:
-                    logger.debug(f"Creating new configuration with custom name: {name}")
-                    config = create_node_specific_config(node_id, name)
-                    save_node_config(node_id, config)
-                else:
-                    logger.debug("Loading existing stored configuration")
-                    config = get_stored_config(node_id)
-                click.echo(click.style("✓ Using stored configuration", fg='green'))
-            except MQTTError as e:
-                logger.debug(f"Error with stored configuration: {str(e)}")
-                click.echo(click.style(f"✗ {str(e)}", fg='red'), err=True)
-                sys.exit(1)
-        else:
-            if not config_file:
-                logger.debug("No configuration source specified")
-                click.echo(click.style("✗ Either --config-file or --use-stored must be specified", fg='red'), err=True)
-                sys.exit(1)
-                
-            # Read and validate config file
+        if config_file:
+            # Use custom config file if provided
             logger.debug(f"Loading configuration from file: {config_file}")
             with open(config_file, 'r') as f:
                 config = json.load(f)
+        else:
+            # Create config from template
+            logger.debug(f"Creating configuration from {device_type} template")
+            config = create_node_specific_config(node_id, device_type, project_name)
 
         # Basic validation
         logger.debug("Validating configuration")
@@ -249,11 +242,10 @@ def set_config(ctx, node_id, config_file, use_stored, name):
             click.echo(click.style(f"✗ Config file node_id '{config['node_id']}' does not match specified node_id '{node_id}'", fg='red'), err=True)
             sys.exit(1)
 
-        # Save the configuration locally if it came from a custom config file
-        if not use_stored:
-            logger.debug("Saving custom configuration locally")
-            save_node_config(node_id, config)
-            click.echo(click.style("✓ Saved configuration locally", fg='green'))
+        # Save the configuration locally
+        logger.debug("Saving configuration locally")
+        save_node_config(node_id, config)
+        click.echo(click.style("✓ Saved configuration locally", fg='green'))
 
         # Simple topic structure
         topic = f"node/{node_id}/config"
@@ -280,13 +272,15 @@ def set_config(ctx, node_id, config_file, use_stored, name):
 @click.option('--params-file', type=click.Path(exists=True), help='JSON file containing parameters')
 @click.option('--device-name', required=True, help='Name of the device to set parameters for')
 @click.option('--use-stored', is_flag=True, help='Use stored parameters for the node')
+@click.option('--remote', is_flag=True, help='Use remote parameters topic instead of local')
 @click.pass_context
 @debug_log
-def set_params(ctx, node_id: str, params_file: str, device_name: str, use_stored: bool):
+def set_params(ctx, node_id: str, params_file: str, device_name: str, use_stored: bool, remote: bool):
     """Set parameters for a specific device on a node.
     
-    Example: mqtt-cli node params --node-id node123 --device-name switch1 --params-file params.json
-    Or use stored: mqtt-cli node params --node-id node123 --device-name switch1 --use-stored
+    Examples:
+        mqtt-cli node params --node-id node123 --device-name "Water Heater" --params-file params.json
+        mqtt-cli node params --node-id node123 --device-name "Water Heater" --use-stored --remote
     """
     try:
         # Create event loop for async operations
@@ -341,8 +335,9 @@ def set_params(ctx, node_id: str, params_file: str, device_name: str, use_stored
         # Get device parameters
         device_params = params[device_name]
 
-        # Simple topic structure for device parameters
-        topic = f"node/{node_id}/params"
+        # Topic structure based on remote/local
+        topic = f"node/{node_id}/params/{'remote' if remote else 'local'}"
+        logger.debug(f"Publishing to topic: {topic}")
 
         # Prepare payload with device name
         payload = {
@@ -351,7 +346,7 @@ def set_params(ctx, node_id: str, params_file: str, device_name: str, use_stored
 
         # Publish parameters
         if mqtt_client.publish(topic, json.dumps(payload), qos=1):
-            click.echo(click.style(f"✓ Set parameters for device {device_name} on node {node_id}", fg='green'))
+            click.echo(click.style(f"✓ Set {'remote' if remote else 'local'} parameters for device {device_name} on node {node_id}", fg='green'))
             click.echo("\nParameters:")
             click.echo(json.dumps(payload, indent=2))
             return 0
@@ -599,8 +594,9 @@ def node_disconnected(ctx, node_id, client_id, client_initiated, principal_id, s
 def init_params(ctx, node_id: str, params_file: str, use_stored: bool):
     """Initialize node parameters.
     
-    Example: mqtt-cli node init-params --node-id node123 --params-file init_params.json
-    Or use stored: mqtt-cli node init-params --node-id node123 --use-stored
+    Examples:
+        mqtt-cli node init-params --node-id node123 --params-file init_params.json
+        mqtt-cli node init-params --node-id node123 --use-stored
     """
     try:
         logger.debug(f"Initializing parameters for node {node_id}")
@@ -641,8 +637,8 @@ def init_params(ctx, node_id: str, params_file: str, use_stored: bool):
             with open(params_file, 'r') as f:
                 params = json.load(f)
                 
-        # Topic for initial parameters
-        topic = f"node/{node_id}/params/init"
+        # Topic for initial parameters (local only)
+        topic = f"node/{node_id}/params/local/init"
         logger.debug(f"Publishing to topic: {topic}")
         
         # Publish parameters
@@ -671,8 +667,9 @@ def init_params(ctx, node_id: str, params_file: str, use_stored: bool):
 def group_params(ctx, node_ids: str, params_file: str, use_stored: bool):
     """Set parameters for a group of nodes.
     
-    Example: mqtt-cli node group-params --node-ids "node1,node2,node3" --params-file group_params.json
-    Or use stored: mqtt-cli node group-params --node-ids "node1,node2,node3" --use-stored
+    Examples:
+        mqtt-cli node group-params --node-ids "node1,node2,node3" --params-file group_params.json
+        mqtt-cli node group-params --node-ids "node1,node2,node3" --use-stored
     """
     try:
         # Split node IDs
@@ -720,8 +717,8 @@ def group_params(ctx, node_ids: str, params_file: str, use_stored: bool):
                     click.echo(click.style(f"✗ No active MQTT connection for node {node_id}", fg='red'), err=True)
                     continue
                     
-                # Topic for group parameters
-                topic = f"node/{node_id}/params/group"
+                # Topic for group parameters (local only)
+                topic = f"node/{node_id}/params/local/group"
                 logger.debug(f"Publishing to topic: {topic}")
                 
                 # Publish parameters

@@ -1,8 +1,14 @@
 {
-    "config_version": "2020-03-20",
+    "attributes": [
+        {
+            "name": "admin@espressif",
+            "value": "1"
+        }
+    ],
+    "config_version": "2025-03-20",
     "devices": [
         {
-            "name": "Water Heater",
+            "name": "Light",
             "params": [
                 {
                     "data_type": "string",
@@ -24,19 +30,55 @@
                     "ui_type": "esp.ui.toggle"
                 },
                 {
-                    "bounds": {
-                        "max": 100,
-                        "min": 0,
-                        "step": 1
-                    },
+                    "data_type": "float",
+                    "name": "humidity",
+                    "properties": [
+                        "read",
+                        "simple_ts"
+                    ],
+                    "type": "esp.param.humidity",
+                    "ui_type": "esp.ui.text"
+                },
+                {
                     "data_type": "float",
                     "name": "temperature",
                     "properties": [
                         "read",
-                        "write"
+                        "simple_ts"
                     ],
                     "type": "esp.param.temperature",
-                    "ui_type": "esp.ui.slider"
+                    "ui_type": "esp.ui.text"
+                },
+                {
+                    "data_type": "int",
+                    "name": "Integer_Data",
+                    "properties": [
+                        "read",
+                        "simple_ts"
+                    ],
+                    "type": "esp.param.Integer_Data",
+                    "ui_type": "esp.ui.text"
+                },
+                {
+                    "data_type": "string",
+                    "name": "String_Data",
+                    "properties": [
+                        "read",
+                        "simple_ts"
+                    ],
+                    "type": "esp.param.String_Data",
+                    "ui_type": "esp.ui.text"
+                },
+                {
+                    "data_type": "bool",
+                    "name": "Boolean_Data",
+                    "properties": [
+                        "read",
+                        "time_series",
+                        "simple_ts"
+                    ],
+                    "type": "esp.param.Boolean_Data",
+                    "ui_type": "esp.ui.text"
                 },
                 {
                     "bounds": {
@@ -44,29 +86,59 @@
                         "min": 0,
                         "step": 1
                     },
-                    "data_type": "float",
-                    "name": "Setpoint Temperature",
+                    "data_type": "int",
+                    "name": "Brightness",
                     "properties": [
                         "read",
                         "write"
                     ],
-                    "type": "esp.param.setpoint-temperature",
+                    "type": "esp.param.brightness",
+                    "ui_type": "esp.ui.slider"
+                },
+                {
+                    "bounds": {
+                        "max": 360,
+                        "min": 0,
+                        "step": 1
+                    },
+                    "data_type": "int",
+                    "name": "Hue",
+                    "properties": [
+                        "read",
+                        "write"
+                    ],
+                    "type": "esp.param.hue",
+                    "ui_type": "esp.ui.hue-slider"
+                },
+                {
+                    "bounds": {
+                        "max": 100,
+                        "min": 0,
+                        "step": 1
+                    },
+                    "data_type": "int",
+                    "name": "Saturation",
+                    "properties": [
+                        "read",
+                        "write"
+                    ],
+                    "type": "esp.param.saturation",
                     "ui_type": "esp.ui.slider"
                 }
             ],
             "primary": "Power",
-            "type": "esp.device.water-heater"
+            "type": "esp.device.lightbulb"
         }
     ],
     "info": {
         "fw_version": "1.0",
-        "model": "water-heater",
+        "model": "led_light",
         "name": "ESP RainMaker Device",
-        "platform": "esp32s2",
+        "platform": "esp32",
         "project_name": "PROJECT_NAME_PLACEHOLDER",
-        "type": "water-heater"
+        "type": "Lightbulb"
     },
-    "node_id": "NODE_ID_PLACEHOLDER",
+    "node_id": "CVFtugscpGxP6vNhDNTE4z",
     "services": [
         {
             "name": "Time",

@@ -1,7 +1,7 @@
 {
     "Light": {
-        "Brightness": 5,
-        "Hue": 60,
+        "Brightness": 50,
+        "Hue": 50,
         "Name": "Light",
         "Power": true,
         "Saturation": 10
