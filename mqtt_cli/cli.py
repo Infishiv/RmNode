@@ -39,8 +39,11 @@ from .commands.config import config
               type=click.Path(file_okay=False, dir_okay=True),
               help='Configuration directory path')
 @click.option('--debug', is_flag=True, help='Enable debug mode with detailed logging')
+@click.option('--broker', 
+              help='MQTT broker endpoint to use',
+              default="mqtt://a1p72mufdu6064-ats.iot.us-east-1.amazonaws.com")
 @click.pass_context
-def cli(ctx, config_dir, debug):
+def cli(ctx, config_dir, debug, broker):
     """MQTT CLI - A command-line interface for MQTT operations."""
     try:
         # Initialize context object
@@ -70,8 +73,8 @@ def cli(ctx, config_dir, debug):
         # Create config directory if it doesn't exist
         ctx.obj['CONFIG_DIR'].mkdir(parents=True, exist_ok=True)
         
-        # Set default broker and paths
-        ctx.obj['BROKER'] = "a3q0b7ncspt14l-ats.iot.us-east-1.amazonaws.com"
+        # Set broker from command line option
+        ctx.obj['BROKER'] = broker
         ctx.obj['CERT_FOLDER'] = "certs"
 
         # Initialize configuration manager
@@ -79,6 +82,11 @@ def cli(ctx, config_dir, debug):
         
         # Initialize connection manager
         conn_manager = ConnectionManager(ctx.obj['CONFIG_DIR'])
+        
+        # Update broker in active connection if exists
+        active_node = conn_manager.get_active_node()
+        if active_node:
+            conn_manager.update_connection_broker(active_node, broker)
         
         # Store managers in context
         ctx.obj['CONFIG_MANAGER'] = config_manager

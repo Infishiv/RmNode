@@ -15,7 +15,7 @@ class ConnectionManager:
         config_dir = Path(config_dir)
         config_dir.mkdir(exist_ok=True)  # Ensure directory exists
         self.storage_file = config_dir / 'connection.json'
-        self.connections = {}  # node_id: MQTTOperations
+        self.connections = {}  # node_id: MQTTOperation
         self.connection_info = {}  # node_id: connection_info
         self.active_node = None
         self.logger = logging.getLogger("mqtt_cli")
@@ -122,4 +122,31 @@ class ConnectionManager:
 
     def list_connections(self) -> list:
         """List all stored connection information."""
-        return list(self.connection_info.keys()) 
+        return list(self.connection_info.keys())
+
+    def update_connection_broker(self, node_id: str, broker: str) -> bool:
+        """
+        Update the broker URL for a connection.
+        
+        Args:
+            node_id: The node ID to update
+            broker: The new broker URL
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if node_id in self.connection_info:
+            self.connection_info[node_id]['broker'] = broker
+            self._save()
+            
+            # Update the active connection if it exists
+            if node_id in self.connections:
+                client = self.connections[node_id]
+                client.broker = broker  # Update the broker in the MQTTOperations instance
+                
+            return True
+        return False 
+
+    def get_active_node(self) -> str:
+        """Get the currently active node ID."""
+        return self.active_node 

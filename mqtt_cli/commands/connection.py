@@ -5,7 +5,10 @@ import click
 import asyncio
 import sys
 import logging
+import json
+import os
 from pathlib import Path
+from datetime import datetime, timedelta
 from ..core.mqtt_client import connect_single_node
 from ..mqtt_operations import MQTTOperations
 from ..utils.validators import validate_broker_url, validate_node_id
@@ -16,6 +19,63 @@ from ..utils.debug_logger import debug_log, debug_step
 
 # Get logger for this module
 logger = logging.getLogger(__name__)
+
+class SharedConnectionManager:
+    def __init__(self, config_dir):
+        self.config_dir = config_dir
+        self.state_file = os.path.join(config_dir, 'connection_state.json')
+        self._ensure_state_file()
+
+    def _ensure_state_file(self):
+        """Create state file if it doesn't exist"""
+        if not os.path.exists(self.state_file):
+            os.makedirs(os.path.dirname(self.state_file), exist_ok=True)
+            self._save_state({})
+
+    def _load_state(self):
+        """Load connection state from file"""
+        try:
+            with open(self.state_file, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            logger.debug(f"Error loading state: {str(e)}")
+            return {}
+
+    def _save_state(self, state):
+        """Save connection state to file"""
+        try:
+            with open(self.state_file, 'w') as f:
+                json.dump(state, f)
+        except Exception as e:
+            logger.debug(f"Error saving state: {str(e)}")
+
+    def register_connection(self, node_id, broker_url):
+        """Register a new connection"""
+        state = self._load_state()
+        state[node_id] = {
+            'broker': broker_url,
+            'timestamp': datetime.now().isoformat(),
+            'pid': os.getpid()
+        }
+        self._save_state(state)
+
+    def unregister_connection(self, node_id):
+        """Remove a connection registration"""
+        state = self._load_state()
+        if node_id in state:
+            del state[node_id]
+            self._save_state(state)
+            return True
+        return False
+
+    def is_connected(self, node_id):
+        """Check if a node is registered as connected"""
+        state = self._load_state()
+        return node_id in state
+
+    def get_all_connections(self):
+        """Get all registered connections"""
+        return self._load_state()
 
 @click.group()
 def connection():
@@ -39,10 +99,11 @@ def verify_connection(mqtt_client):
         return False
 
 @debug_log
-async def connect_node(ctx, node_id, broker=None):
+async def connect_node(ctx, node_id, broker=None, timeout=None):
     """Connect to a single node asynchronously."""
     try:
         config_manager = ConfigManager(ctx.obj['CONFIG_DIR'])
+        shared_manager = SharedConnectionManager(ctx.obj['CONFIG_DIR'])
         cert_path, key_path = config_manager.get_node_paths(node_id)
         
         if not cert_path or not key_path:
@@ -71,8 +132,28 @@ async def connect_node(ctx, node_id, broker=None):
             if await asyncio.get_event_loop().run_in_executor(None, mqtt_client.connect):
                 connection_manager = ctx.obj['CONNECTION_MANAGER']
                 connection_manager.add_connection(node_id, broker_url, cert_path, key_path, mqtt_client)
+                shared_manager.register_connection(node_id, broker_url)
                 logger.debug(f"Successfully connected to node {node_id}")
                 click.echo(click.style(f"✓ Connected to {node_id}", fg='green'))
+                
+                if timeout:
+                    # Calculate disconnect time
+                    disconnect_time = datetime.now() + timedelta(seconds=timeout)
+                    click.echo(click.style(f"Connection will automatically close at {disconnect_time.strftime('%H:%M:%S')}", fg='yellow'))
+                    
+                    # Create a task to disconnect after timeout
+                    async def disconnect_after_timeout():
+                        await asyncio.sleep(timeout)
+                        if connection_manager.get_connection(node_id):
+                            connection_manager.remove_connection(node_id)
+                            shared_manager.unregister_connection(node_id)
+                            click.echo(click.style(f"\n✓ Auto-disconnected from {node_id} after {timeout} seconds", fg='yellow'))
+                            if ctx.obj.get('NODE_ID') == node_id:
+                                ctx.obj['MQTT'] = None
+                                ctx.obj['NODE_ID'] = None
+                    
+                    asyncio.create_task(disconnect_after_timeout())
+                
                 return True
             else:
                 logger.debug(f"Failed to connect to node {node_id}")
@@ -92,14 +173,16 @@ async def connect_node(ctx, node_id, broker=None):
 @connection.command('connect')
 @click.option('--node-id', required=True, help='Node ID(s) to connect to. Can be single ID or comma-separated list')
 @click.option('--broker', help="Override default MQTT broker URL")
+@click.option('--timeout', type=int, help="Time in seconds after which the connection will automatically close")
 @click.pass_context
 @debug_log
-def connect(ctx, node_id, broker):
+def connect(ctx, node_id, broker, timeout):
     """Connect to one or more nodes using stored configuration.
     
     Examples:
         mqtt-cli connection connect --node-id node123
         mqtt-cli connection connect --node-id "node123,node456,node789"
+        mqtt-cli connection connect --node-id node123 --timeout 3600
     """
     try:
         # Create event loop for async operations
@@ -111,22 +194,30 @@ def connect(ctx, node_id, broker):
         node_ids = [n.strip() for n in node_id.split(',')]
         logger.debug(f"Processing connection for nodes: {node_ids}")
         
+        if timeout:
+            logger.debug(f"Connection timeout set to {timeout} seconds")
+            if len(node_ids) > 1:
+                click.echo(click.style("Note: Timeout will be applied to all connections", fg='yellow'))
+        
         # Create tasks for each node connection
-        tasks = [connect_node(ctx, n, broker) for n in node_ids]
+        tasks = [connect_node(ctx, n, broker, timeout) for n in node_ids]
         
         # Run all connections in parallel
         logger.debug("Starting parallel connection tasks")
         results = loop.run_until_complete(asyncio.gather(*tasks))
         
-        # Set the first successful connection as active
-        for n, success in zip(node_ids, results):
-            if success:
-                logger.debug(f"Setting {n} as active node")
-                ctx.obj['NODE_ID'] = n
-                ctx.obj['MQTT'] = ctx.obj['CONNECTION_MANAGER'].get_connection(n)
-                break
-                
-        loop.close()
+        # Keep the event loop running if we have a timeout
+        if timeout and any(results):
+            click.echo(click.style("\nKeeping connection alive until timeout...", fg='yellow'))
+            try:
+                loop.run_forever()
+            except KeyboardInterrupt:
+                click.echo("\nConnection terminated by user")
+            finally:
+                loop.close()
+        else:
+            loop.close()
+            
         logger.debug("Event loop closed")
         
         # For single node, return appropriate exit code
@@ -147,34 +238,41 @@ def connect(ctx, node_id, broker):
 def disconnect(ctx, node_id, all):
     """Disconnect from one or all nodes."""
     connection_manager = ctx.obj['CONNECTION_MANAGER']
+    shared_manager = SharedConnectionManager(ctx.obj['CONFIG_DIR'])
     
     try:
         if all:
             logger.debug("Disconnecting all nodes")
             # Disconnect all nodes
             results = connection_manager.disconnect_all()
-            for node_id, success in results.items():
-                logger.debug(f"Disconnect result for {node_id}: {'success' if success else 'failed'}")
-                if success:
-                    click.echo(click.style(f"✓ Disconnected from {node_id}", fg='green'))
-                else:
-                    click.echo(click.style(f"✗ Failed to disconnect from {node_id}", fg='red'))
+            state = shared_manager.get_all_connections()
+            for node_id in list(state.keys()):
+                shared_manager.unregister_connection(node_id)
+                click.echo(click.style(f"✓ Disconnected from {node_id}", fg='green'))
             ctx.obj['MQTT'] = None
             ctx.obj['NODE_ID'] = None
         elif node_id:
             logger.debug(f"Disconnecting specific node: {node_id}")
-            # Disconnect specific node
-            if connection_manager.remove_connection(node_id):
-                logger.debug(f"Successfully disconnected from {node_id}")
-                click.echo(click.style(f"✓ Disconnected from {node_id}", fg='green'))
-                if ctx.obj.get('NODE_ID') == node_id:
-                    ctx.obj['MQTT'] = None
-                    ctx.obj['NODE_ID'] = None
-                return 0 if not all else None  # Return exit code only for single node
+            # Check if node is registered in shared state
+            if shared_manager.is_connected(node_id):
+                # Disconnect specific node
+                if connection_manager.remove_connection(node_id):
+                    shared_manager.unregister_connection(node_id)
+                    logger.debug(f"Successfully disconnected from {node_id}")
+                    click.echo(click.style(f"✓ Disconnected from {node_id}", fg='green'))
+                    if ctx.obj.get('NODE_ID') == node_id:
+                        ctx.obj['MQTT'] = None
+                        ctx.obj['NODE_ID'] = None
+                    return 0
+                else:
+                    # If local connection manager doesn't have it, just remove from shared state
+                    shared_manager.unregister_connection(node_id)
+                    click.echo(click.style(f"✓ Disconnected from {node_id}", fg='green'))
+                    return 0
             else:
                 logger.debug(f"No connection found for {node_id}")
                 click.echo(click.style(f"✗ No connection found for {node_id}", fg='red'))
-                if not all:  # Exit with error only for single node
+                if not all:
                     sys.exit(1)
         else:
             # Disconnect active node
@@ -186,6 +284,7 @@ def disconnect(ctx, node_id, all):
                 
             logger.debug(f"Disconnecting active node: {active_node}")
             if connection_manager.remove_connection(active_node):
+                shared_manager.unregister_connection(active_node)
                 logger.debug(f"Successfully disconnected from active node {active_node}")
                 click.echo(click.style(f"✓ Disconnected from {active_node}", fg='green'))
                 ctx.obj['MQTT'] = None
