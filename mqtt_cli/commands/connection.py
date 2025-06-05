@@ -9,13 +9,14 @@ import json
 import os
 from pathlib import Path
 from datetime import datetime, timedelta
-from ..core.mqtt_client import connect_single_node
+from ..core.mqtt_client import connect_single_node, get_active_mqtt_client
 from ..mqtt_operations import MQTTOperations
 from ..utils.validators import validate_broker_url, validate_node_id
 from ..utils.exceptions import MQTTConnectionError
 from ..utils.config_manager import ConfigManager
 from ..utils.cert_finder import get_cert_and_key_paths, get_root_cert_path, get_cert_paths_from_direct_path
 from ..utils.debug_logger import debug_log, debug_step
+from ..utils.connection_manager import ConnectionManager
 
 # Get logger for this module
 logger = logging.getLogger(__name__)
@@ -79,7 +80,7 @@ class SharedConnectionManager:
 
 @click.group()
 def connection():
-    """Connection management commands."""
+    """Manage MQTT connections."""
     pass
 
 @debug_step("Verifying MQTT connection status")
@@ -102,100 +103,57 @@ def verify_connection(mqtt_client):
 async def connect_node(ctx, node_id, broker=None, timeout=None):
     """Connect to a single node asynchronously."""
     try:
-        config_manager = ConfigManager(ctx.obj['CONFIG_DIR'])
         shared_manager = SharedConnectionManager(ctx.obj['CONFIG_DIR'])
         
-        # Get broker URL from config or parameter
-        broker_url = broker or config_manager.get_broker()
-        logger.debug(f"Using broker URL: {broker_url}")
-        
-        # Get root certificate path
-        root_path = get_root_cert_path(ctx.obj['CONFIG_DIR'])
-        logger.debug(f"Root certificate path: {root_path}")
-        
-        # Get certificate paths
-        try:
-            if ctx.obj.get('CERT_PATH'):
-                # Use direct certificate path if provided
-                cert_path, key_path = get_cert_paths_from_direct_path(ctx.obj['CERT_PATH'], node_id)
-                logger.debug(f"Using certificates from direct path: {cert_path}, {key_path}")
-            else:
-                # Use stored configuration
-                cert_paths = config_manager.get_node_paths(node_id)
-                if not cert_paths:
-                    logger.debug(f"Certificate paths not found for node {node_id}")
-                    click.echo(click.style(f"✗ Node {node_id} not found in configuration", fg='red'), err=True)
-                    return False
-                cert_path, key_path = cert_paths
-        except FileNotFoundError as e:
-            logger.debug(f"Certificate error: {str(e)}")
-            click.echo(click.style(f"✗ {str(e)}", fg='red'), err=True)
-            return False
-        
-        try:
-            logger.debug(f"Initializing MQTT client for node {node_id}")
-            mqtt_client = MQTTOperations(
-                broker=broker_url,
-                node_id=node_id,
-                cert_path=cert_path,
-                key_path=key_path,
-                root_path=root_path
-            )
+        # Use the centralized get_active_mqtt_client function
+        mqtt_client = get_active_mqtt_client(ctx, auto_connect=True, node_id=node_id)
+        if mqtt_client:
+            shared_manager.register_connection(node_id, ctx.obj['BROKER'])
+            logger.debug(f"Successfully connected to node {node_id}")
+            click.echo(click.style(f"✓ Connected to {node_id}", fg='green'))
             
-            if await asyncio.get_event_loop().run_in_executor(None, mqtt_client.connect):
-                connection_manager = ctx.obj['CONNECTION_MANAGER']
-                connection_manager.add_connection(node_id, broker_url, cert_path, key_path, mqtt_client)
-                shared_manager.register_connection(node_id, broker_url)
-                logger.debug(f"Successfully connected to node {node_id}")
-                click.echo(click.style(f"✓ Connected to {node_id}", fg='green'))
+            if timeout:
+                # Calculate disconnect time
+                disconnect_time = datetime.now() + timedelta(seconds=timeout)
+                click.echo(click.style(f"Connection will automatically close at {disconnect_time.strftime('%H:%M:%S')}", fg='yellow'))
                 
-                if timeout:
-                    # Calculate disconnect time
-                    disconnect_time = datetime.now() + timedelta(seconds=timeout)
-                    click.echo(click.style(f"Connection will automatically close at {disconnect_time.strftime('%H:%M:%S')}", fg='yellow'))
-                    
-                    # Create a task to disconnect after timeout
-                    async def disconnect_after_timeout():
-                        await asyncio.sleep(timeout)
-                        if connection_manager.get_connection(node_id):
-                            connection_manager.remove_connection(node_id)
-                            shared_manager.unregister_connection(node_id)
-                            click.echo(click.style(f"\n✓ Auto-disconnected from {node_id} after {timeout} seconds", fg='yellow'))
-                            if ctx.obj.get('NODE_ID') == node_id:
-                                ctx.obj['MQTT'] = None
-                                ctx.obj['NODE_ID'] = None
-                    
-                    asyncio.create_task(disconnect_after_timeout())
+                # Create a task to disconnect after timeout
+                async def disconnect_after_timeout():
+                    await asyncio.sleep(timeout)
+                    connection_manager = ctx.obj['CONNECTION_MANAGER']
+                    if connection_manager.get_connection(node_id):
+                        connection_manager.remove_connection(node_id)
+                        shared_manager.unregister_connection(node_id)
+                        click.echo(click.style(f"\n✓ Auto-disconnected from {node_id} after {timeout} seconds", fg='yellow'))
+                        if ctx.obj.get('NODE_ID') == node_id:
+                            ctx.obj['MQTT'] = None
+                            ctx.obj['NODE_ID'] = None
                 
-                return True
-            else:
-                logger.debug(f"Failed to connect to node {node_id}")
-                click.echo(click.style(f"✗ Failed to connect to {node_id}", fg='red'), err=True)
-                return False
-                
-        except Exception as e:
-            logger.debug(f"Connection error for node {node_id}: {str(e)}")
-            click.echo(click.style(f"✗ Connection failed for {node_id}: {str(e)}", fg='red'), err=True)
+                asyncio.create_task(disconnect_after_timeout())
+            
+            return True
+        else:
+            logger.debug(f"Failed to connect to node {node_id}")
+            click.echo(click.style(f"✗ Failed to connect to {node_id}", fg='red'), err=True)
             return False
             
     except Exception as e:
-        logger.debug(f"General error for node {node_id}: {str(e)}")
-        click.echo(click.style(f"✗ Error for {node_id}: {str(e)}", fg='red'), err=True)
+        logger.debug(f"Connection error for node {node_id}: {str(e)}")
+        click.echo(click.style(f"✗ Connection failed for {node_id}: {str(e)}", fg='red'), err=True)
         return False
 
 @connection.command('connect')
-@click.option('--node-id', required=True, help='Node ID(s) to connect to. Can be single ID or comma-separated list')
-@click.option('--broker', help="Override default MQTT broker URL")
-@click.option('--timeout', type=int, help="Time in seconds after which the connection will automatically close")
+@click.option('--node-id', required=True, help='Node ID to connect to')
+@click.option('--timeout', type=int, default=30, help='Connection timeout in seconds')
 @click.pass_context
 @debug_log
-def connect(ctx, node_id, broker, timeout):
-    """Connect to one or more nodes using stored configuration.
+def connect(ctx, node_id, timeout):
+    """Connect to a node or multiple nodes.
     
     Examples:
-        mqtt-cli connection connect --node-id node123
-        mqtt-cli connection connect --node-id "node123,node456,node789"
-        mqtt-cli connection connect --node-id node123 --timeout 3600
+    rm-node connection connect --node-id node123
+    rm-node connection connect --node-id "node123,node456,node789"
+    rm-node connection connect --node-id node123 --timeout 3600
     """
     try:
         # Create event loop for async operations
@@ -213,7 +171,7 @@ def connect(ctx, node_id, broker, timeout):
                 click.echo(click.style("Note: Timeout will be applied to all connections", fg='yellow'))
         
         # Create tasks for each node connection
-        tasks = [connect_node(ctx, n, broker, timeout) for n in node_ids]
+        tasks = [connect_node(ctx, n, timeout=timeout) for n in node_ids]
         
         # Run all connections in parallel
         logger.debug("Starting parallel connection tasks")
@@ -223,11 +181,16 @@ def connect(ctx, node_id, broker, timeout):
         if timeout and any(results):
             click.echo(click.style("\nKeeping connection alive until timeout...", fg='yellow'))
             try:
-                loop.run_forever()
+                # Create a future to stop the event loop after timeout
+                stop_future = loop.create_future()
+                loop.call_later(timeout, stop_future.set_result, None)
+                loop.run_until_complete(stop_future)
             except KeyboardInterrupt:
                 click.echo("\nConnection terminated by user")
             finally:
+                loop.stop()
                 loop.close()
+                sys.exit(0)
         else:
             loop.close()
             

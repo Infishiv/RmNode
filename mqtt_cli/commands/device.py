@@ -13,6 +13,7 @@ from ..commands.connection import connect_node
 from ..utils.config_manager import ConfigManager
 from ..mqtt_operations import MQTTOperations
 from ..utils.debug_logger import debug_log, debug_step
+from ..core.mqtt_client import get_active_mqtt_client
 import time
 
 # Get logger for this module
@@ -20,45 +21,17 @@ logger = logging.getLogger(__name__)
 
 @click.group()
 def device():
-    """Device management commands."""
+    """Manage device operations."""
     pass
 
 @debug_step("Ensuring node connection")
 async def ensure_node_connection(ctx, node_id: str) -> bool:
     """Ensure connection to a node is active, connect if needed."""
     try:
-        # Get config manager
-        logger.debug(f"Getting config manager for node {node_id}")
-        config_manager = ConfigManager(ctx.obj['CONFIG_DIR'])
-        cert_paths = config_manager.get_node_paths(node_id)
-        if not cert_paths:
-            logger.debug(f"Node {node_id} not found in configuration")
-            click.echo(click.style(f"✗ Node {node_id} not found in configuration", fg='red'), err=True)
-            return False
-            
-        cert_path, key_path = cert_paths
-        logger.debug(f"Found certificates for node {node_id}")
-        
-        # Get broker URL from config
-        broker_url = config_manager.get_broker()
-        logger.debug(f"Using broker URL: {broker_url}")
-        
-        # Create new MQTT client
-        logger.debug("Initializing MQTT client")
-        mqtt_client = MQTTOperations(
-            broker=broker_url,
-            node_id=node_id,
-            cert_path=cert_path,
-            key_path=key_path
-        )
-        
-        # Connect
-        logger.debug("Attempting to connect")
-        if mqtt_client.connect():
-            logger.debug("Connection successful")
+        mqtt_client = get_active_mqtt_client(ctx, auto_connect=True, node_id=node_id)
+        if mqtt_client:
             ctx.obj['MQTT'] = mqtt_client
             return True
-        logger.debug("Connection failed")
         return False
     except Exception as e:
         logger.debug(f"Connection error: {str(e)}")
@@ -80,7 +53,7 @@ def format_tlv_message(request_id: str, role: int, command: int, data: dict = No
     return message
 
 @device.command('send-command')
-@click.option('--node-id', required=True, help='Node ID')
+@click.option('--node-id', required=True, help='Node ID to send command to')
 @click.option('--request-id', help='Unique request ID (generated if not provided)')
 @click.option('--role', type=click.Choice(['1', '2', '4']), required=True, 
               help='User role (1=admin, 2=primary, 4=secondary)')
@@ -92,7 +65,7 @@ def format_tlv_message(request_id: str, role: int, command: int, data: dict = No
 def send_node_command(ctx, node_id: str, request_id: str, role: str, command: int, command_data: str):
     """Send command to node using TLV format.
     
-    Example: mqtt-cli device send-command --node-id node123 --role 1 --command 0
+    Example: rm-node device send-command --node-id node123 --role 1 --command 0
     """
     try:
         # Create event loop for async operations
@@ -161,16 +134,16 @@ def send_node_command(ctx, node_id: str, request_id: str, role: str, command: in
         sys.exit(1)
 
 @device.command('send-alert')
-@click.option('--node-id', required=True, help='Node ID')
+@click.option('--node-id', required=True, help='Node ID to send alert to')
 @click.option('--message', required=True, help='Alert message')
-@click.option('--basic-ingest', is_flag=True, help='Use basic ingest topic ($aws/rules/esp_node_alert/...) to save costs')
+@click.option('--basic-ingest', is_flag=True, help='Use basic ingest mode')
 @click.pass_context
 @debug_log
 def send_alert(ctx, node_id: str, message: str, basic_ingest: bool):
-    """Send alert message from node.
+    """Send an alert from a device.
     
-    Example: mqtt-cli device send-alert --node-id node123 --message "Temperature high!"
-    Or with basic ingest: mqtt-cli device send-alert --node-id node123 --message "Alert!" --basic-ingest
+    Example: rm-node device send-alert --node-id node123 --message "Temperature high!"
+    Or with basic ingest: rm-node device send-alert --node-id node123 --message "Alert!" --basic-ingest
     """
     try:
         # Create event loop for async operations

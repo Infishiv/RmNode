@@ -16,6 +16,7 @@ from ..commands.connection import connect_node
 from ..mqtt_operations import MQTTOperations
 from ..utils.config_manager import ConfigManager
 from ..utils.debug_logger import debug_log, debug_step
+from ..core.mqtt_client import get_active_mqtt_client
 
 # Get logger for this module
 logger = logging.getLogger(__name__)
@@ -37,52 +38,13 @@ def fetch_ota(ctx, node_id: str, fw_version: str, network_id: Optional[str]):
     Example: mqtt-cli ota fetch --node-id node123 --fw-version 1.0.0 --network-id net123
     """
     try:
-        # Get the connection manager
-        logger.debug("Getting connection manager")
-        connection_manager = ctx.obj.get('CONNECTION_MANAGER')
-        if not connection_manager:
-            logger.debug("Connection manager not initialized")
-            click.echo(click.style("✗ Connection manager not initialized", fg='red'), err=True)
-            raise click.Abort()
-
-        # Get or establish connection
+        # Get or establish connection using centralized function
         logger.debug(f"Getting or establishing connection for node {node_id}")
-        mqtt_client = connection_manager.get_connection(node_id)
+        mqtt_client = get_active_mqtt_client(ctx, auto_connect=True, node_id=node_id)
         if not mqtt_client:
-            # Get config manager
-            logger.debug("No existing connection found, creating new one")
-            config_manager = ConfigManager(ctx.obj['CONFIG_DIR'])
-            cert_paths = config_manager.get_node_paths(node_id)
-            if not cert_paths:
-                logger.debug(f"Node {node_id} not found in configuration")
-                click.echo(click.style(f"✗ Node {node_id} not found in configuration", fg='red'), err=True)
-                raise click.Abort()
-                
-            cert_path, key_path = cert_paths
-            logger.debug(f"Retrieved certificate paths for node {node_id}")
-            
-            # Get broker URL from config
-            broker_url = config_manager.get_broker()
-            logger.debug(f"Retrieved broker URL: {broker_url}")
-            
-            # Create new MQTT client
-            logger.debug("Creating new MQTT client")
-            mqtt_client = MQTTOperations(
-                broker=broker_url,
-                node_id=node_id,
-                cert_path=cert_path,
-                key_path=key_path
-            )
-            
-            # Connect and store the connection
-            logger.debug("Attempting to connect and store connection")
-            if mqtt_client.connect():
-                logger.debug("Successfully connected and stored connection")
-                connection_manager.add_connection(node_id, broker_url, cert_path, key_path, mqtt_client)
-            else:
-                logger.debug("Failed to connect to node")
-                click.echo(click.style("✗ Failed to connect to node", fg='red'), err=True)
-                raise click.Abort()
+            logger.debug("Failed to get MQTT client")
+            click.echo(click.style("✗ Failed to connect to node", fg='red'), err=True)
+            raise click.Abort()
 
         # Prepare payload
         logger.debug("Preparing OTA fetch payload")
@@ -135,52 +97,13 @@ def update_status(ctx, node_id: str, status: str, job_id: str, network_id: str, 
         # Process each node in parallel
         for node_id in node_ids:
             try:
-                # Get the connection manager
-                logger.debug(f"Getting connection manager for node {node_id}")
-                connection_manager = ctx.obj.get('CONNECTION_MANAGER')
-                if not connection_manager:
-                    logger.debug("Connection manager not initialized")
-                    click.echo(click.style("✗ Connection manager not initialized", fg='red'), err=True)
-                    raise click.Abort()
-
-                # Get or establish connection
+                # Get or establish connection using centralized function
                 logger.debug(f"Getting or establishing connection for node {node_id}")
-                mqtt_client = connection_manager.get_connection(node_id)
+                mqtt_client = get_active_mqtt_client(ctx, auto_connect=True, node_id=node_id)
                 if not mqtt_client:
-                    # Get config manager
-                    logger.debug("No existing connection found, creating new one")
-                    config_manager = ConfigManager(ctx.obj['CONFIG_DIR'])
-                    cert_paths = config_manager.get_node_paths(node_id)
-                    if not cert_paths:
-                        logger.debug(f"Node {node_id} not found in configuration")
-                        click.echo(click.style(f"✗ Node {node_id} not found in configuration", fg='red'), err=True)
-                        continue
-                        
-                    cert_path, key_path = cert_paths
-                    logger.debug(f"Retrieved certificate paths for node {node_id}")
-                    
-                    # Get broker URL from config
-                    broker_url = config_manager.get_broker()
-                    logger.debug(f"Retrieved broker URL: {broker_url}")
-                    
-                    # Create new MQTT client
-                    logger.debug("Creating new MQTT client")
-                    mqtt_client = MQTTOperations(
-                        broker=broker_url,
-                        node_id=node_id,
-                        cert_path=cert_path,
-                        key_path=key_path
-                    )
-                    
-                    # Connect and store the connection
-                    logger.debug("Attempting to connect and store connection")
-                    if mqtt_client.connect():
-                        logger.debug("Successfully connected and stored connection")
-                        connection_manager.add_connection(node_id, broker_url, cert_path, key_path, mqtt_client)
-                    else:
-                        logger.debug(f"Failed to connect to node {node_id}")
-                        click.echo(click.style(f"✗ Failed to connect to node {node_id}", fg='red'), err=True)
-                        continue
+                    logger.debug(f"Failed to get MQTT client for node {node_id}")
+                    click.echo(click.style(f"✗ Failed to connect to node {node_id}", fg='red'), err=True)
+                    continue
                 
                 # Prepare payload
                 logger.debug("Preparing OTA status payload")
