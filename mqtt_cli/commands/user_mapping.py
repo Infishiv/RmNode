@@ -16,85 +16,45 @@ from ..commands.connection import connect_node
 from ..utils.config_manager import ConfigManager
 from ..mqtt_operations import MQTTOperations
 from ..utils.debug_logger import debug_log, debug_step
+from ..utils.connection_manager import ConnectionManager
+from ..core.mqtt_client import get_active_mqtt_client
 
 # Get logger for this module
 logger = logging.getLogger(__name__)
 
 @click.group()
 def user():
-    """User-node mapping and alert management commands.
-    
-    This command group provides functionality to:
-    - Map users to nodes with authentication
-    - Send alerts to specific nodes
-    - Manage user-node relationships
-    
-    Example usage:
-        mqtt-cli user map --node-id node123 --user-id user456 --secret-key abc123
-        mqtt-cli user alert --node-id node123 --message "System update required"
-    """
+    """Manage user-node mappings."""
     pass
 
 @debug_step("Ensuring node connection")
 async def ensure_node_connection(ctx, node_id: str) -> bool:
     """Ensure connection to a node is active, connect if needed."""
     try:
-        # Get config manager
-        logger.debug(f"Getting config manager for node {node_id}")
-        config_manager = ConfigManager(ctx.obj['CONFIG_DIR'])
-        cert_paths = config_manager.get_node_paths(node_id)
-        if not cert_paths:
-            logger.debug(f"Node {node_id} not found in configuration")
-            click.echo(click.style(f"✗ Node {node_id} not found in configuration", fg='red'), err=True)
-            return False
-            
-        cert_path, key_path = cert_paths
-        logger.debug(f"Retrieved certificate paths for node {node_id}")
-        
-        # Get broker URL from config
-        broker_url = config_manager.get_broker()
-        logger.debug(f"Retrieved broker URL: {broker_url}")
-        
-        # Create new MQTT client
-        logger.debug("Creating new MQTT client")
-        mqtt_client = MQTTOperations(
-            broker=broker_url,
-            node_id=node_id,
-            cert_path=cert_path,
-            key_path=key_path
-        )
-        
-        # Connect
-        logger.debug(f"Attempting to connect to node {node_id}")
-        if mqtt_client.connect():
-            logger.debug(f"Successfully connected to node {node_id}")
+        mqtt_client = get_active_mqtt_client(ctx, auto_connect=True, node_id=node_id)
+        if mqtt_client:
             ctx.obj['MQTT'] = mqtt_client
             return True
-        logger.debug(f"Failed to connect to node {node_id}")
         return False
     except Exception as e:
         logger.debug(f"Connection error: {str(e)}")
         click.echo(click.style(f"✗ Connection error: {str(e)}", fg='red'), err=True)
         return False
 
-@user.command('map')
-@click.option('--node-id', required=True, help='Node ID to map the user to')
-@click.option('--user-id', required=True, help='User ID to map to the node')
+@user.command()
+@click.option('--node-id', required=True, help='Node ID to map')
+@click.option('--user-id', required=True, help='User ID to map')
 @click.option('--secret-key', required=True, help='Secret key for authentication')
-@click.option('--reset', is_flag=True, help='Reset the existing mapping')
-@click.option('--timeout', default=300, type=int, help='Mapping timeout in seconds (default: 300)')
+@click.option('--timeout', type=int, help='Mapping timeout in seconds')
+@click.option('--reset', is_flag=True, help='Reset existing mapping')
 @click.pass_context
 @debug_log
-def map_user(ctx, node_id, user_id, secret_key, reset, timeout):
-    """Map a user to a node with authentication.
-    
-    This command creates or updates a mapping between a user and a node.
-    The mapping requires a secret key for authentication.
+def map(ctx, node_id, user_id, secret_key, timeout, reset):
+    """Map a user to a node.
     
     Examples:
-        mqtt-cli user map --node-id node123 --user-id user456 --secret-key abc123
-        mqtt-cli user map --node-id node123 --user-id user456 --secret-key abc123 --reset
-        mqtt-cli user map --node-id node123 --user-id user456 --secret-key abc123 --timeout 600
+    rm-node user map --node-id node123 --user-id user456 --secret-key abc123
+    rm-node user alert --node-id node123 --message "System update required"
     """
     try:
         # Create event loop for async operations
@@ -148,21 +108,18 @@ def map_user(ctx, node_id, user_id, secret_key, reset, timeout):
         click.echo(click.style(f"✗ Error: {str(e)}", fg='red'), err=True)
         sys.exit(1)
 
-@user.command('alert')
-@click.option('--node-id', required=True, help='Node ID to send the alert to')
-@click.option('--message', required=True, help='Alert message to send')
+@user.command()
+@click.option('--node-id', required=True, help='Node ID to send alert to')
+@click.option('--message', required=True, help='Alert message')
 @click.pass_context
 @debug_log
-def send_alert(ctx, node_id, message):
-    """Send an alert message to a node.
-    
-    This command sends an alert message to a specific node.
-    The alert will be delivered via MQTT and can be used for notifications
-    or system messages.
+def alert(ctx, node_id, message):
+    """Send an alert to a user mapped to a node.
     
     Examples:
-        mqtt-cli user alert --node-id node123 --message "System update required"
-        mqtt-cli user alert --node-id node123 --message "Battery low"
+    rm-node user map --node-id node123 --user-id user456 --secret-key abc123
+    rm-node user map --node-id node123 --user-id user456 --secret-key abc123 --reset
+    rm-node user map --node-id node123 --user-id user456 --secret-key abc123 --timeout 600
     """
     try:
         # Create event loop for async operations

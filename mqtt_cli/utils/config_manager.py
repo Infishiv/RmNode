@@ -20,6 +20,9 @@ class ConfigManager:
             'admin_cli_path': None
         }
         self._load()
+        
+        # Ensure all configured nodes have valid certificate paths
+        self._validate_node_paths()
 
     def _load(self):
         """Load configuration from file."""
@@ -33,6 +36,29 @@ class ConfigManager:
         """Save configuration to file."""
         self.config_dir.mkdir(parents=True, exist_ok=True)
         self.config_file.write_text(json.dumps(self.config, indent=2))
+
+    def _validate_node_paths(self):
+        """Validate and update node certificate paths."""
+        invalid_nodes = []
+        for node_id, node_info in self.config['nodes'].items():
+            cert_path = Path(node_info['cert_path'])
+            key_path = Path(node_info['key_path'])
+            
+            # Check if paths exist
+            if not cert_path.exists() or not key_path.exists():
+                invalid_nodes.append(node_id)
+                continue
+                
+            # Update paths to be absolute
+            node_info['cert_path'] = str(cert_path.resolve())
+            node_info['key_path'] = str(key_path.resolve())
+            
+        # Remove invalid nodes
+        for node_id in invalid_nodes:
+            del self.config['nodes'][node_id]
+            
+        if invalid_nodes:
+            self._save()
 
     def set_broker(self, broker: str):
         """Set the MQTT broker URL."""
@@ -54,9 +80,17 @@ class ConfigManager:
 
     def add_node(self, node_id: str, cert_path: str, key_path: str):
         """Add or update a node's certificate paths."""
+        cert_path = Path(cert_path)
+        key_path = Path(key_path)
+        
+        if not cert_path.exists():
+            raise FileNotFoundError(f"Certificate file not found: {cert_path}")
+        if not key_path.exists():
+            raise FileNotFoundError(f"Key file not found: {key_path}")
+            
         self.config['nodes'][node_id] = {
-            'cert_path': str(Path(cert_path).resolve()),
-            'key_path': str(Path(key_path).resolve())
+            'cert_path': str(cert_path.resolve()),
+            'key_path': str(key_path.resolve())
         }
         self._save()
 
@@ -64,7 +98,16 @@ class ConfigManager:
         """Get certificate paths for a node."""
         node_info = self.config['nodes'].get(node_id)
         if node_info:
-            return node_info['cert_path'], node_info['key_path']
+            cert_path = Path(node_info['cert_path'])
+            key_path = Path(node_info['key_path'])
+            
+            if cert_path.exists() and key_path.exists():
+                return str(cert_path), str(key_path)
+                
+            # Remove invalid node
+            del self.config['nodes'][node_id]
+            self._save()
+            
         return None
 
     def list_nodes(self) -> Dict[str, dict]:

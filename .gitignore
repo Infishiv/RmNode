@@ -1,5 +1,5 @@
 # MQTT CLI specific
-.mqtt-cli/
+.rm-node/
 .DS_Store
 
 # Python
@@ -23,6 +23,7 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+MANIFEST
 
 # Virtual Environment
 venv/
@@ -33,4 +34,17 @@ env/
 .idea/
 .vscode/
 *.swp
-*.swo 
+*.swo
+
+# OS
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# MQTT CLI specific
+.mqtt-cli/connection_state.json
+.mqtt-cli/config.json
+.mqtt-cli/connection.json 

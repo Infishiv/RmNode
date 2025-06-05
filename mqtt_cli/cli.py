@@ -40,8 +40,7 @@ from .commands.config import config
               help='Configuration directory path')
 @click.option('--debug', is_flag=True, help='Enable debug mode with detailed logging')
 @click.option('--broker', 
-              help='MQTT broker endpoint to use',
-              default="mqtt://a1p72mufdu6064-ats.iot.us-east-1.amazonaws.com")
+              help='MQTT broker endpoint to use')
 @click.option('--cert-path',
               type=click.Path(exists=True, dir_okay=True, file_okay=True),
               help='Direct certificate path to use instead of stored configuration')
@@ -71,28 +70,40 @@ def cli(ctx, config_dir, debug, broker, cert_path):
         if config_dir:
             ctx.obj['CONFIG_DIR'] = Path(config_dir)
         else:
+            # Use .mqtt-cli as default config directory
             ctx.obj['CONFIG_DIR'] = Path('.mqtt-cli')
             
         # Create config directory if it doesn't exist
         ctx.obj['CONFIG_DIR'].mkdir(parents=True, exist_ok=True)
         
-        # Set broker from command line option
-        ctx.obj['BROKER'] = broker
-        ctx.obj['CERT_FOLDER'] = "certs"
-        
-        # Store cert_path in context if provided
-        ctx.obj['CERT_PATH'] = Path(cert_path) if cert_path else None
-
         # Initialize configuration manager
         config_manager = ConfigManager(ctx.obj['CONFIG_DIR'])
         
+        # Set broker from command line option or config
+        if broker:
+            ctx.obj['BROKER'] = broker
+            # Update broker in config if provided
+            config_manager.set_broker(broker)
+        else:
+            # Use broker from config
+            ctx.obj['BROKER'] = config_manager.get_broker()
+        
+        # Set up certificate folder
+        if cert_path:
+            ctx.obj['CERT_PATH'] = Path(cert_path)
+            ctx.obj['CERT_FOLDER'] = str(ctx.obj['CERT_PATH'])
+        else:
+            # Use certs folder in config directory
+            ctx.obj['CERT_FOLDER'] = str(ctx.obj['CONFIG_DIR'] / 'certs')
+            Path(ctx.obj['CERT_FOLDER']).mkdir(parents=True, exist_ok=True)
+
         # Initialize connection manager
         conn_manager = ConnectionManager(ctx.obj['CONFIG_DIR'])
         
         # Update broker in active connection if exists
         active_node = conn_manager.get_active_node()
         if active_node:
-            conn_manager.update_connection_broker(active_node, broker)
+            conn_manager.update_connection_broker(active_node, ctx.obj['BROKER'])
         
         # Store managers in context
         ctx.obj['CONFIG_MANAGER'] = config_manager

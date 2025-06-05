@@ -20,6 +20,7 @@ from ..commands.connection import connect_node
 from ..utils.config_manager import ConfigManager
 from ..mqtt_operations import MQTTOperations
 from ..utils.debug_logger import debug_log, debug_step
+from ..core.mqtt_client import get_active_mqtt_client
 
 # Get logger for this module
 logger = logging.getLogger(__name__)
@@ -145,34 +146,10 @@ def get_stored_params(node_id: str) -> dict:
 async def ensure_node_connection(ctx, node_id: str) -> bool:
     """Ensure connection to a node is active, connect if needed."""
     try:
-        # Get config manager
-        config_manager = ConfigManager(ctx.obj['CONFIG_DIR'])
-        cert_paths = config_manager.get_node_paths(node_id)
-        if not cert_paths:
-            logger.debug(f"Node {node_id} not found in configuration")
-            click.echo(click.style(f"✗ Node {node_id} not found in configuration", fg='red'), err=True)
-            return False
-            
-        cert_path, key_path = cert_paths
-        
-        # Get broker URL from config
-        broker_url = config_manager.get_broker()
-        
-        # Create new MQTT client
-        mqtt_client = MQTTOperations(
-            broker=broker_url,
-            node_id=node_id,
-            cert_path=cert_path,
-            key_path=key_path
-        )
-        
-        # Connect
-        if mqtt_client.connect():
-            logger.debug(f"Connected to node {node_id}")
+        mqtt_client = get_active_mqtt_client(ctx, auto_connect=True, node_id=node_id)
+        if mqtt_client:
             ctx.obj['MQTT'] = mqtt_client
             return True
-            
-        logger.debug(f"Failed to connect to node {node_id}")
         return False
     except Exception as e:
         logger.debug(f"Connection error: {str(e)}")

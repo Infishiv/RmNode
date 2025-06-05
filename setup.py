@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="mqtt_cli",
+    name="rm-node",
     version="0.1.0",
     packages=find_packages(),
     install_requires=[
@@ -11,7 +11,7 @@ setup(
     ],
     entry_points={
         'console_scripts': [
-            'mqtt-cli=mqtt_cli.cli:cli',
+            'rm-node=mqtt_cli.cli:cli',
         ],
     },
 )

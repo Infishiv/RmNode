@@ -20,4 +20,8 @@ class MQTTValidationError(MQTTError):
 
 class MQTTOTAError(MQTTError):
     """Exception raised for OTA update errors."""
+    pass
+
+class MQTTOperationsException(MQTTError):
+    """Exception raised for MQTT operations errors."""
     pass 

@@ -1,5 +1,5 @@
 """
-Messaging commands for MQTT CLI.
+MQTT messaging commands.
 """
 import click
 import json
@@ -7,13 +7,14 @@ import sys
 import logging
 from ..utils.exceptions import MQTTConnectionError
 from ..utils.debug_logger import debug_log, debug_step
+from ..utils.connection_manager import ConnectionManager
 
 # Get logger for this module
 logger = logging.getLogger(__name__)
 
 @click.group()
 def messaging():
-    """Messaging commands."""
+    """Manage MQTT messaging operations."""
     pass
 
 @messaging.command('subscribe')
@@ -22,9 +23,9 @@ def messaging():
 @click.pass_context
 @debug_log
 def subscribe(ctx, topic, qos):
-    """Subscribe to a topic.
+    """Subscribe to an MQTT topic.
     
-    Example: mqtt-cli messaging subscribe --topic my/topic/# --qos 1
+    Example: rm-node messaging subscribe --topic my/topic/# --qos 1
     """
     try:
         if 'MQTT' not in ctx.obj:
@@ -48,9 +49,9 @@ def subscribe(ctx, topic, qos):
 @click.pass_context
 @debug_log
 def publish(ctx, topic, message, qos):
-    """Publish a message to a topic.
+    """Publish a message to an MQTT topic.
     
-    Example: mqtt-cli messaging publish --topic my/topic --message "Hello MQTT" --qos 1
+    Example: rm-node messaging publish --topic my/topic --message "Hello MQTT" --qos 1
     """
     try:
         if 'MQTT' not in ctx.obj:
@@ -69,14 +70,14 @@ def publish(ctx, topic, message, qos):
         sys.exit(1)
 
 @messaging.command('monitor')
-@click.option('--topic', required=True, help='Topic pattern to monitor')
+@click.option('--topic', required=True, help='Topic to monitor')
 @click.option('--qos', default=1, type=int, help='QoS level (0,1)')
 @click.pass_context
 @debug_log
 def monitor(ctx, topic, qos):
-    """Monitor messages on a topic pattern.
+    """Monitor messages on an MQTT topic.
     
-    Example: mqtt-cli messaging monitor --topic my/topic/# --qos 1
+    Example: rm-node messaging monitor --topic my/topic/# --qos 1
     """
     try:
         if 'MQTT' not in ctx.obj:
@@ -128,9 +129,9 @@ def monitor(ctx, topic, qos):
 @click.pass_context
 @debug_log
 def unsubscribe(ctx, topic):
-    """Unsubscribe from a topic.
+    """Unsubscribe from an MQTT topic.
     
-    Example: mqtt-cli messaging unsubscribe --topic my/topic/#
+    Example: rm-node messaging unsubscribe --topic my/topic/#
     """
     try:
         if 'MQTT' not in ctx.obj:
@@ -151,9 +152,9 @@ def unsubscribe(ctx, topic):
 @click.pass_context
 @debug_log
 def list_subscriptions(ctx):
-    """List all active subscriptions.
+    """List active MQTT subscriptions.
     
-    Example: mqtt-cli messaging list-subscriptions
+    Example: rm-node messaging list-subscriptions
     """
     try:
         if 'MQTT' not in ctx.obj:

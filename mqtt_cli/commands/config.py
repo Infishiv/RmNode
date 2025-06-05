@@ -1,5 +1,5 @@
 """
-Configuration management commands for MQTT CLI.
+Configuration management commands.
 """
 import click
 import os
@@ -8,13 +8,14 @@ from pathlib import Path
 from ..utils.cert_finder import find_node_cert_key_pairs_path
 from ..utils.config_manager import ConfigManager
 from ..utils.debug_logger import debug_log, debug_step
+from ..utils.connection_manager import ConnectionManager
 
 # Get logger for this module
 logger = logging.getLogger(__name__)
 
 @click.group()
 def config():
-    """Configuration management commands."""
+    """Manage configuration settings."""
     pass
 
 @config.command('set-broker')
@@ -24,7 +25,7 @@ def config():
 def set_broker(ctx, url):
     """Set the MQTT broker URL.
     
-    Example: mqtt-cli config set-broker --url mqtt://broker.example.com
+    Example: rm-node config set-broker --url mqtt://broker.example.com
     """
     try:
         logger.debug(f"Setting broker URL to: {url}")
@@ -43,7 +44,7 @@ def set_broker(ctx, url):
 def get_broker(ctx):
     """Get the current MQTT broker URL.
     
-    Example: mqtt-cli config get-broker
+    Example: rm-node config get-broker
     """
     try:
         logger.debug("Getting current broker URL")
@@ -65,7 +66,7 @@ def get_broker(ctx):
 def set_admin_cli(ctx, path, update):
     """Set the Nodes's Certs path and discover nodes.
     
-    Example: mqtt-cli config set-admin-cli --path /path/to/admin-cli --update
+    Example: rm-node config set-admin-cli --path /path/to/admin-cli --update
     """
     try:
         logger.debug(f"Setting admin CLI path to: {path}")
@@ -136,7 +137,7 @@ def set_admin_cli(ctx, path, update):
 def get_admin_cli(ctx):
     """Get the Nodes's Certs path.
     
-    Example: mqtt-cli config get-admin-cli
+    Example: rm-node config get-admin-cli
     """
     try:
         logger.debug("Getting admin CLI path")
@@ -159,7 +160,7 @@ def get_admin_cli(ctx):
 def list_nodes(ctx):
     """List all configured nodes.
     
-    Example: mqtt-cli config list-nodes
+    Example: rm-node config list-nodes
     """
     try:
         logger.debug("Listing configured nodes")
@@ -194,7 +195,7 @@ def list_nodes(ctx):
 def add_node(ctx, node_id, cert_path, key_path):
     """Add or update a node's certificate paths.
     
-    Example: mqtt-cli config add-node --node-id node123 --cert-path /path/to/cert.pem --key-path /path/to/key.pem
+    Example: rm-node config add-node --node-id node123 --cert-path /path/to/cert.pem --key-path /path/to/key.pem
     """
     try:
         logger.debug(f"Adding/updating node {node_id}")
@@ -216,7 +217,7 @@ def add_node(ctx, node_id, cert_path, key_path):
 def remove_node(ctx, node_id):
     """Remove a node's configuration.
     
-    Example: mqtt-cli config remove-node --node-id node123
+    Example: rm-node config remove-node --node-id node123
     """
     try:
         logger.debug(f"Removing node {node_id}")
@@ -239,7 +240,7 @@ def remove_node(ctx, node_id):
 def reset(ctx):
     """Reset all configuration to defaults.
     
-    Example: mqtt-cli config reset
+    Example: rm-node config reset
     """
     try:
         logger.debug("Resetting all configuration to defaults")
