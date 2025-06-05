@@ -42,8 +42,11 @@ from .commands.config import config
 @click.option('--broker', 
               help='MQTT broker endpoint to use',
               default="mqtt://a1p72mufdu6064-ats.iot.us-east-1.amazonaws.com")
+@click.option('--cert-path',
+              type=click.Path(exists=True, dir_okay=True, file_okay=True),
+              help='Direct certificate path to use instead of stored configuration')
 @click.pass_context
-def cli(ctx, config_dir, debug, broker):
+def cli(ctx, config_dir, debug, broker, cert_path):
     """MQTT CLI - A command-line interface for MQTT operations."""
     try:
         # Initialize context object
@@ -76,6 +79,9 @@ def cli(ctx, config_dir, debug, broker):
         # Set broker from command line option
         ctx.obj['BROKER'] = broker
         ctx.obj['CERT_FOLDER'] = "certs"
+        
+        # Store cert_path in context if provided
+        ctx.obj['CERT_PATH'] = Path(cert_path) if cert_path else None
 
         # Initialize configuration manager
         config_manager = ConfigManager(ctx.obj['CONFIG_DIR'])

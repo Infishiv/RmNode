@@ -282,3 +282,45 @@ def find_node_cert_key_pairs_path(base_path):
             print(f"Warning: Certificate files not found for node {node_id} in {folder_path}")
 
     return node_pairs
+
+def get_cert_paths_from_direct_path(base_path: str, node_id: str) -> Tuple[str, str]:
+    """
+    Find certificate and key paths for a node when using direct path.
+    This is used when --cert-path is provided in CLI.
+    
+    Args:
+        base_path: Base directory to search
+        node_id: Node ID to find certificates for
+        
+    Returns:
+        tuple: (cert_path, key_path)
+        
+    Raises:
+        FileNotFoundError: If certificates are not found
+    """
+    base_path = Path(base_path)
+    
+    # First try finding in node_details structure
+    node_folders = find_node_folders(base_path)
+    for folder_node_id, folder_path in node_folders:
+        if folder_node_id == node_id:
+            crt_path, key_path = find_crt_key_files(folder_path)
+            if crt_path and key_path:
+                return str(crt_path), str(key_path)
+    
+    # If not found in node_details, try direct path
+    cert_path = base_path / f"{node_id}.crt"
+    key_path = base_path / f"{node_id}.key"
+    
+    if cert_path.exists() and key_path.exists():
+        return str(cert_path), str(key_path)
+        
+    # Try node.crt/node.key in a node-specific directory
+    node_dir = base_path / f"node-{node_id}"
+    if node_dir.exists():
+        cert_path = node_dir / "node.crt"
+        key_path = node_dir / "node.key"
+        if cert_path.exists() and key_path.exists():
+            return str(cert_path), str(key_path)
+            
+    raise FileNotFoundError(f"Certificate files not found for node {node_id} in {base_path}")

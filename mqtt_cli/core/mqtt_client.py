@@ -4,12 +4,17 @@ MQTT client operations for MQTT CLI.
 import click
 import sys
 from ..mqtt_operations import MQTTOperations
-from ..utils.cert_finder import get_cert_and_key_paths
+from ..utils.cert_finder import get_cert_and_key_paths, get_cert_paths_from_direct_path
 
-def connect_single_node(broker: str, node_id: str, base_path: str) -> tuple:
+def connect_single_node(broker: str, node_id: str, base_path: str, direct_cert_path: str = None) -> tuple:
     """Helper function to connect a single node"""
     try:
-        cert_path, key_path = get_cert_and_key_paths(base_path, node_id)
+        # If direct_cert_path is provided, use it instead of stored config
+        if direct_cert_path:
+            cert_path, key_path = get_cert_paths_from_direct_path(direct_cert_path, node_id)
+        else:
+            cert_path, key_path = get_cert_and_key_paths(base_path, node_id)
+            
         mqtt_client = MQTTOperations(
             broker=broker,
             node_id=node_id,
@@ -30,7 +35,8 @@ def get_active_mqtt_client(ctx, auto_connect=False, node_id=None):
         click.echo(click.style(f"Auto-connecting to node {node_id}...", fg='yellow'))
         broker = ctx.obj['BROKER']
         base_path = ctx.obj['CERT_FOLDER']
-        result = connect_single_node(broker, node_id, base_path)
+        direct_cert_path = ctx.obj.get('CERT_PATH')
+        result = connect_single_node(broker, node_id, base_path, direct_cert_path)
         _, mqtt_client, error = result
         
         if error:

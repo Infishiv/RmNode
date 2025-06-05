@@ -14,7 +14,7 @@ from ..mqtt_operations import MQTTOperations
 from ..utils.validators import validate_broker_url, validate_node_id
 from ..utils.exceptions import MQTTConnectionError
 from ..utils.config_manager import ConfigManager
-from ..utils.cert_finder import get_cert_and_key_paths, get_root_cert_path
+from ..utils.cert_finder import get_cert_and_key_paths, get_root_cert_path, get_cert_paths_from_direct_path
 from ..utils.debug_logger import debug_log, debug_step
 
 # Get logger for this module
@@ -104,13 +104,7 @@ async def connect_node(ctx, node_id, broker=None, timeout=None):
     try:
         config_manager = ConfigManager(ctx.obj['CONFIG_DIR'])
         shared_manager = SharedConnectionManager(ctx.obj['CONFIG_DIR'])
-        cert_path, key_path = config_manager.get_node_paths(node_id)
         
-        if not cert_path or not key_path:
-            logger.debug(f"Certificate paths not found for node {node_id}")
-            click.echo(click.style(f"✗ Node {node_id} not found in configuration", fg='red'), err=True)
-            return False
-            
         # Get broker URL from config or parameter
         broker_url = broker or config_manager.get_broker()
         logger.debug(f"Using broker URL: {broker_url}")
@@ -118,6 +112,25 @@ async def connect_node(ctx, node_id, broker=None, timeout=None):
         # Get root certificate path
         root_path = get_root_cert_path(ctx.obj['CONFIG_DIR'])
         logger.debug(f"Root certificate path: {root_path}")
+        
+        # Get certificate paths
+        try:
+            if ctx.obj.get('CERT_PATH'):
+                # Use direct certificate path if provided
+                cert_path, key_path = get_cert_paths_from_direct_path(ctx.obj['CERT_PATH'], node_id)
+                logger.debug(f"Using certificates from direct path: {cert_path}, {key_path}")
+            else:
+                # Use stored configuration
+                cert_paths = config_manager.get_node_paths(node_id)
+                if not cert_paths:
+                    logger.debug(f"Certificate paths not found for node {node_id}")
+                    click.echo(click.style(f"✗ Node {node_id} not found in configuration", fg='red'), err=True)
+                    return False
+                cert_path, key_path = cert_paths
+        except FileNotFoundError as e:
+            logger.debug(f"Certificate error: {str(e)}")
+            click.echo(click.style(f"✗ {str(e)}", fg='red'), err=True)
+            return False
         
         try:
             logger.debug(f"Initializing MQTT client for node {node_id}")
