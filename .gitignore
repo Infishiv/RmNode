@@ -1,5 +1,5 @@
 # MQTT CLI specific
-.rm-node/
+.rmnode/
 .DS_Store
 
 # Python
@@ -45,6 +45,6 @@ ehthumbs.db
 Thumbs.db
 
 # MQTT CLI specific
-.mqtt-cli/connection_state.json
-.mqtt-cli/config.json
-.mqtt-cli/connection.json 
+.rmnode/connection_state.json
+.rmnode/config.json
+.rmnode/connection.json 

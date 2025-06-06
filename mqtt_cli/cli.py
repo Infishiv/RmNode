@@ -70,8 +70,8 @@ def cli(ctx, config_dir, debug, broker, cert_path):
         if config_dir:
             ctx.obj['CONFIG_DIR'] = Path(config_dir)
         else:
-            # Use .mqtt-cli as default config directory
-            ctx.obj['CONFIG_DIR'] = Path('.mqtt-cli')
+            # Use .rmnode as default config directory
+            ctx.obj['CONFIG_DIR'] = Path('.rmnode')
             
         # Create config directory if it doesn't exist
         ctx.obj['CONFIG_DIR'].mkdir(parents=True, exist_ok=True)
