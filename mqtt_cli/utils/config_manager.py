@@ -8,7 +8,7 @@ from typing import Dict, Optional, Tuple
 class ConfigManager:
     """Manages MQTT CLI configuration including broker and node details."""
     
-    DEFAULT_BROKER = "a3q0b7ncspt14l-ats.iot.us-east-1.amazonaws.com"
+    DEFAULT_BROKER = "a1p72mufdu6064-ats.iot.us-east-1.amazonaws.com"
     
     def __init__(self, config_dir: Path):
         """Initialize the configuration manager."""

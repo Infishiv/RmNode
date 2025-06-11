@@ -1,6 +1,3 @@
 Metadata-Version: 2.1
-Name: mqtt_cli
+Name: mqtt-cli
 Version: 0.1.0
-Requires-Dist: click>=7.0
-Requires-Dist: paho-mqtt>=1.5.0
-Requires-Dist: AWSIoTPythonSDK>=1.5.0
