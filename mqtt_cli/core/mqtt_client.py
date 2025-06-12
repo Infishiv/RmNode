@@ -6,12 +6,12 @@ import sys
 from ..mqtt_operations import MQTTOperations
 from ..utils.cert_finder import get_cert_and_key_paths, get_cert_paths_from_direct_path
 
-def connect_single_node(broker: str, node_id: str, base_path: str, direct_cert_path: str = None) -> tuple:
+def connect_single_node(broker: str, node_id: str, base_path: str, direct_cert_path: str = None, mac_address: str = None) -> tuple:
     """Helper function to connect a single node"""
     try:
         # If direct_cert_path is provided, use it instead of stored config
         if direct_cert_path:
-            cert_path, key_path = get_cert_paths_from_direct_path(direct_cert_path, node_id)
+            cert_path, key_path = get_cert_paths_from_direct_path(direct_cert_path, node_id, mac_address)
         else:
             cert_path, key_path = get_cert_and_key_paths(base_path, node_id)
             
@@ -36,11 +36,12 @@ def get_active_mqtt_client(ctx, auto_connect=False, node_id=None):
         click.echo(click.style(f"Auto-connecting to node {node_id}...", fg='yellow'))
         broker = ctx.obj.get('BROKER')
         cert_path = ctx.obj.get('CERT_PATH')
+        mac_address = ctx.obj.get('MAC_ADDRESS')  # Get MAC address from context
         
         try:
             # Try direct certificate path first if provided
             if cert_path:
-                cert_path, key_path = get_cert_paths_from_direct_path(cert_path, node_id)
+                cert_path, key_path = get_cert_paths_from_direct_path(cert_path, node_id, mac_address)
                 # Store certificate paths in config for future use
                 if config_manager:
                     config_manager.add_node(node_id, cert_path, key_path)

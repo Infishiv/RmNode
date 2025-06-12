@@ -44,8 +44,10 @@ from .commands.config import config
 @click.option('--cert-path',
               type=click.Path(exists=True, dir_okay=True, file_okay=True),
               help='Direct certificate path to use instead of stored configuration')
+@click.option('--mac',
+              help='12-digit alphanumeric MAC address to find certificates')
 @click.pass_context
-def cli(ctx, config_dir, debug, broker, cert_path):
+def cli(ctx, config_dir, debug, broker, cert_path, mac):
     """MQTT CLI - A command-line interface for MQTT operations."""
     try:
         # Initialize context object
@@ -88,10 +90,13 @@ def cli(ctx, config_dir, debug, broker, cert_path):
             # Use broker from config
             ctx.obj['BROKER'] = config_manager.get_broker()
         
-        # Set up certificate folder
+        # Set up certificate folder and MAC address
         if cert_path:
             ctx.obj['CERT_PATH'] = Path(cert_path)
             ctx.obj['CERT_FOLDER'] = str(ctx.obj['CERT_PATH'])
+            # Store MAC address in context if provided
+            if mac:
+                ctx.obj['MAC_ADDRESS'] = mac
         else:
             # Use certs folder in config directory
             ctx.obj['CERT_FOLDER'] = str(ctx.obj['CONFIG_DIR'] / 'certs')
