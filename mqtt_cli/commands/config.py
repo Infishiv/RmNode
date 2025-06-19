@@ -5,7 +5,7 @@ import click
 import os
 import logging
 from pathlib import Path
-from ..utils.cert_finder import find_node_cert_key_pairs_path
+from ..utils.cert_finder import find_node_cert_key_pairs
 from ..utils.config_manager import ConfigManager
 from ..utils.debug_logger import debug_log, debug_step
 from ..utils.connection_manager import ConnectionManager
@@ -58,7 +58,7 @@ def get_broker(ctx):
         raise click.Abort()
 
 @config.command('set-cert-path')
-@click.option('--path', required=True, help='Path to Rainmaker admin CLI')
+@click.option('--path', required=True, help='Path to certificates directory')
 @click.option('--update/--no-update', default=True, 
               help='Update existing nodes if they exist (default: True)')
 @click.pass_context
@@ -66,10 +66,10 @@ def get_broker(ctx):
 def set_admin_cli(ctx, path, update):
     """Set the Nodes's Certs path and discover nodes.
     
-    Example: rm-node config set-admin-cli --path /path/to/admin-cli --update
+    Example: rm-node config set-admin-cli --path /path/to/certs --update
     """
     try:
-        logger.debug(f"Setting admin CLI path to: {path}")
+        logger.debug(f"Setting certificates path to: {path}")
         path = Path(path).resolve()
         if not path.exists():
             logger.debug(f"Path does not exist: {path}")
@@ -78,14 +78,14 @@ def set_admin_cli(ctx, path, update):
             
         config_manager = ConfigManager(ctx.obj['CONFIG_DIR'])
         config_manager.set_admin_cli_path(str(path))
-        logger.debug("Successfully set admin CLI path")
+        logger.debug("Successfully set certificates path")
         
-        # Auto-discover nodes
+        # Auto-discover nodes using node_details structure
         logger.debug("Starting node auto-discovery")
-        nodes = find_node_cert_key_pairs_path(path)
+        nodes = find_node_cert_key_pairs(path)
         if not nodes:
-            logger.debug("No nodes found in admin CLI directory")
-            click.echo(click.style("No nodes found in admin CLI directory.", fg='yellow'))
+            logger.debug("No nodes found in certificates directory")
+            click.echo(click.style("No nodes found in certificates directory.", fg='yellow'))
             return
             
         # Track new and updated nodes
@@ -111,7 +111,7 @@ def set_admin_cli(ctx, path, update):
                 new_nodes.append(node_id)
             
         # Print results
-        click.echo(click.style(f"✓ Admin CLI path set to: {path}", fg='green'))
+        click.echo(click.style(f"✓ Certificates path set to: {path}", fg='green'))
         if new_nodes:
             logger.debug(f"Added {len(new_nodes)} new nodes")
             click.echo(click.style(f"✓ Added {len(new_nodes)} new node(s):", fg='green'))
@@ -127,8 +127,8 @@ def set_admin_cli(ctx, path, update):
             click.echo(click.style("No changes made to node configurations.", fg='yellow'))
             
     except Exception as e:
-        logger.debug(f"Error setting admin CLI path: {str(e)}")
-        click.echo(click.style(f"✗ Failed to set admin CLI path: {str(e)}", fg='red'), err=True)
+        logger.debug(f"Error setting certificates path: {str(e)}")
+        click.echo(click.style(f"✗ Failed to set certificates path: {str(e)}", fg='red'), err=True)
         raise click.Abort()
 
 @config.command('get-cert-path')

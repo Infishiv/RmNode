@@ -161,6 +161,7 @@ def request(ctx, node_id: str, timeout: int):
         # Track responses and MQTT clients for each node
         responses_received = {node_id: False for node_id in node_ids}
         mqtt_clients = {}
+        valid_nodes_found = False
         logger.debug(f"Initialized response tracking for nodes: {list(responses_received.keys())}")
 
         @debug_step("Publishing status update")
@@ -343,36 +344,14 @@ def request(ctx, node_id: str, timeout: int):
         for node_id in node_ids:
             try:
                 logger.debug(f"Processing node {node_id}")
-                mqtt_client = connection_manager.get_connection(node_id)
+                # Use get_active_mqtt_client for consistent certificate handling
+                mqtt_client = get_active_mqtt_client(ctx, auto_connect=True, node_id=node_id)
                 if not mqtt_client:
-                    logger.debug("No existing connection found, creating new one")
-                    config_manager = ConfigManager(ctx.obj['CONFIG_DIR'])
-                    cert_paths = config_manager.get_node_paths(node_id)
-                    if not cert_paths:
-                        logger.debug(f"Node {node_id} not found in configuration")
-                        click.echo(click.style(f"✗ Node {node_id} not found in configuration", fg='red'), err=True)
-                        continue
-                        
-                    broker_url = config_manager.get_broker()
-                    cert_path, key_path = cert_paths
-                    logger.debug(f"Retrieved certificate paths and broker URL for node {node_id}")
-                    
-                    mqtt_client = MQTTOperations(
-                        broker=broker_url,
-                        node_id=node_id,
-                        cert_path=cert_path,
-                        key_path=key_path
-                    )
-                    
-                    logger.debug(f"Attempting to connect to node {node_id}")
-                    if mqtt_client.connect():
-                        logger.debug("Successfully connected and stored connection")
-                        connection_manager.add_connection(node_id, broker_url, cert_path, key_path, mqtt_client)
-                    else:
-                        logger.debug(f"Failed to connect to node {node_id}")
-                        click.echo(click.style(f"✗ Failed to connect to node {node_id}", fg='red'), err=True)
-                        continue
+                    logger.debug(f"Failed to get MQTT client for node {node_id}")
+                    click.echo(click.style(f"✗ Failed to connect to node {node_id}", fg='red'), err=True)
+                    continue
 
+                valid_nodes_found = True
                 # Store MQTT client reference
                 mqtt_clients[node_id] = mqtt_client
                 logger.debug(f"Stored MQTT client for node {node_id}")
@@ -390,7 +369,12 @@ def request(ctx, node_id: str, timeout: int):
             except Exception as e:
                 logger.debug(f"Error setting up node {node_id}: {str(e)}")
                 click.echo(click.style(f"✗ Error for node {node_id}: {str(e)}", fg='red'), err=True)
- 
+
+        if not valid_nodes_found:
+            logger.debug("No valid nodes found to monitor")
+            click.echo(click.style("✗ No valid nodes found to monitor. Aborting.", fg='red'), err=True)
+            raise click.Abort()
+
         click.echo("\nMonitoring all nodes. Press Ctrl+C to stop...")
         logger.debug("Starting monitoring loop")
  

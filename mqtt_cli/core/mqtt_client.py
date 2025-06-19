@@ -9,7 +9,7 @@ from ..utils.cert_finder import get_cert_and_key_paths, get_cert_paths_from_dire
 def connect_single_node(broker: str, node_id: str, base_path: str, direct_cert_path: str = None) -> tuple:
     """Helper function to connect a single node"""
     try:
-        # If direct_cert_path is provided, use it instead of stored config
+        # If direct_cert_path is provided, use it with MAC address or node_details search
         if direct_cert_path:
             cert_path, key_path = get_cert_paths_from_direct_path(direct_cert_path, node_id)
         else:
@@ -50,7 +50,7 @@ def get_active_mqtt_client(ctx, auto_connect=False, node_id=None):
                 if cert_paths:
                     cert_path, key_path = cert_paths
                 else:
-                    # If not in config, try default location
+                    # If not in config, try default location using node_details structure
                     base_path = ctx.obj['CERT_FOLDER']
                     cert_path, key_path = get_cert_and_key_paths(base_path, node_id)
                     # Store certificate paths in config for future use

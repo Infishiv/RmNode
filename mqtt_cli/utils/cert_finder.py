@@ -7,7 +7,13 @@ from datetime import datetime
 import click
 from pathlib import Path
 from typing import Optional, Tuple, List
+import logging
+from .debug_logger import debug_log, debug_step
 
+# Get logger for this module
+logger = logging.getLogger(__name__)
+
+@debug_step("Converting Unix path to Windows")
 def convert_unix_path_to_windows(unix_path: str, base_path: str) -> str:
     """Convert Unix-style path to Windows path relative to base_path."""
     try:
@@ -15,19 +21,88 @@ def convert_unix_path_to_windows(unix_path: str, base_path: str) -> str:
         if 'esp-rainmaker-admin-cli' in unix_path:
             relative_path = unix_path.split('esp-rainmaker-admin-cli/')[-1]
             # Convert to Windows path and join with base_path
-            return str(Path(base_path) / relative_path)
+            logger.debug(f"Converting path {unix_path} to Windows format")
+            result = str(Path(base_path) / relative_path)
+            logger.debug(f"Converted path: {result}")
+            return result
         return unix_path
-    except Exception:
+    except Exception as e:
+        logger.debug(f"Path conversion failed: {str(e)}")
         return unix_path
 
-def find_node_cert_key_pairs(base_path: str, is_rainmaker: bool = False) -> List[Tuple[str, str, str]]:
+@debug_step("Reading node info file")
+def read_node_info_file(file_path: Path) -> Optional[str]:
     """
-    Find all node ID, certificate, and key file pairs.
-    First tries CSV files, then falls back to direct directory search.
+    Read node.info file and extract node_id.
+    
+    Args:
+        file_path: Path to node.info file
+        
+    Returns:
+        str: node_id if found, None otherwise
+    """
+    try:
+        logger.debug(f"Reading node.info file: {file_path}")
+        with open(file_path, 'r') as f:
+            content = f.read().strip()
+            logger.debug(f"Found node_id: {content}")
+            return content
+    except Exception as e:
+        logger.debug(f"Failed to read node.info file: {str(e)}")
+        return None
+
+@debug_step("Finding certificates by MAC address")
+def find_by_mac_address(base_path: str, mac_address: str, node_id: str) -> Optional[Tuple[str, str]]:
+    """
+    Find certificate and key files by MAC address directory.
     
     Args:
         base_path: Base directory to search
-        is_rainmaker: Whether to use Rainmaker-specific search logic
+        mac_address: 12-digit alphanumeric MAC address
+        node_id: Node ID to validate against node.info
+        
+    Returns:
+        tuple: (cert_path, key_path) if found, None otherwise
+    """
+    base_path = Path(base_path)
+    mac_dir = base_path / mac_address
+    
+    logger.debug(f"Looking for certificates in MAC directory: {mac_dir}")
+    
+    # Check if MAC directory exists
+    if mac_dir.exists() and mac_dir.is_dir():
+        logger.debug("Found MAC address directory")
+        # Check node.info file
+        node_info_path = mac_dir / 'node.info'
+        if node_info_path.exists():
+            stored_node_id = read_node_info_file(node_info_path)
+            if stored_node_id == node_id:
+                logger.debug(f"Node ID match found: {node_id}")
+                # Found matching directory, look for cert and key
+                cert_path = mac_dir / 'node.crt'
+                key_path = mac_dir / 'node.key'
+                if cert_path.exists() and key_path.exists():
+                    logger.debug(f"Found certificate files: {cert_path}, {key_path}")
+                    return str(cert_path), str(key_path)
+                else:
+                    logger.debug("Certificate files not found in MAC directory")
+            else:
+                logger.debug(f"Node ID mismatch. Expected: {node_id}, Found: {stored_node_id}")
+        else:
+            logger.debug("node.info file not found in MAC directory")
+    else:
+        logger.debug("MAC address directory not found")
+    
+    return None
+
+@debug_step("Finding node certificate key pairs")
+def find_node_cert_key_pairs(base_path: str) -> List[Tuple[str, str, str]]:
+    """
+    Find all node ID, certificate, and key file pairs.
+    Searches in node_details directory structure.
+    
+    Args:
+        base_path: Base directory to search
     
     Returns:
         list: List of tuples containing (node_id, cert_path, key_path)
@@ -35,164 +110,69 @@ def find_node_cert_key_pairs(base_path: str, is_rainmaker: bool = False) -> List
     node_pairs = []
     base_path = Path(base_path)
     
-    if is_rainmaker:
-        # Rainmaker-specific search logic
-        try:
-            # Find all yyyy-mm-dd directories
-            date_dirs = []
-            for entry in os.listdir(base_path):
-                full_path = base_path / entry
-                if full_path.is_dir():
-                    try:
-                        datetime.strptime(entry, '%Y-%m-%d')
-                        date_dirs.append(full_path)
-                    except ValueError:
-                        continue
-
-            for date_dir in date_dirs:
-                # Find all Mfg-xxxxxx directories
-                mfg_dirs = [d for d in os.listdir(date_dir)
-                           if (date_dir / d).is_dir() and d.startswith('Mfg-')]
-
-                for mfg_dir in mfg_dirs:
-                    mfg_path = date_dir / mfg_dir
-                    csv_dir_path = mfg_path / 'csv'
-                    
-                    if not csv_dir_path.is_dir():
-                        continue
-
-                    # Process all CSV files in the directory
-                    csv_files = [f for f in os.listdir(csv_dir_path) if f.endswith('.csv')]
-                    
-                    for csv_file in csv_files:
-                        csv_path = csv_dir_path / csv_file
-                        node_id = csv_file.replace('.csv', '').split('-', 2)[-1]  # Extract node ID from filename
-                        
-                        try:
-                            with open(csv_path, mode='r') as file:
-                                reader = csv.DictReader(file)
-                                cert_path = None
-                                key_path = None
-                                
-                                for row in reader:
-                                    if row['key'] == 'client_cert':
-                                        cert_path = convert_unix_path_to_windows(row['value'], base_path)
-                                    elif row['key'] == 'client_key':
-                                        key_path = convert_unix_path_to_windows(row['value'], base_path)
-                                
-                                if cert_path and key_path:
-                                    # Convert to Path objects for existence check
-                                    cert_path_obj = Path(cert_path)
-                                    key_path_obj = Path(key_path)
-                                    
-                                    # Also try with .crt and .key extensions
-                                    if not cert_path_obj.exists():
-                                        cert_path_obj = cert_path_obj.with_suffix('.crt')
-                                    if not key_path_obj.exists():
-                                        key_path_obj = key_path_obj.with_suffix('.key')
-                                    
-                                    if cert_path_obj.exists() and key_path_obj.exists():
-                                        node_pairs.append((node_id, str(cert_path_obj), str(key_path_obj)))
-                        except Exception as e:
-                            click.echo(click.style(f"Error processing {csv_file}: {str(e)}", fg='yellow'))
-        except Exception as e:
-            click.echo(click.style(f"Error accessing directory {base_path}: {str(e)}", fg='yellow'))
-    else:
-        # Original generic search logic
-        try:
-            # First try CSV method
-            for root, dirs, files in os.walk(base_path):
-                root_path = Path(root)
-                csv_files = [f for f in files if f.endswith('.csv')]
-                
-                for csv_file in csv_files:
-                    csv_path = root_path / csv_file
-                    try:
-                        with open(csv_path, mode='r') as file:
-                            reader = csv.reader(file)
-                            node_id = None
-                            cert_path = None
-                            key_path = None
-                            
-                            for row in reader:
-                                if len(row) < 4:
-                                    continue
-                                
-                                if row[0] == 'node_id':
-                                    node_id = row[3]
-                                elif row[0] == 'client_cert':
-                                    cert_path = row[3]
-                                elif row[0] == 'client_key':
-                                    key_path = row[3]
-                            
-                            if node_id and cert_path and key_path:
-                                # Convert paths to absolute if they're relative
-                                cert_path = Path(cert_path)
-                                key_path = Path(key_path)
-                                if not cert_path.is_absolute():
-                                    cert_path = base_path / cert_path
-                                if not key_path.is_absolute():
-                                    key_path = base_path / key_path
-                                    
-                                if cert_path.exists() and key_path.exists():
-                                    node_pairs.append((node_id, str(cert_path), str(key_path)))
-                    except Exception as e:
-                        click.echo(click.style(f"Error processing {csv_file}: {str(e)}", fg='yellow'))
-
-            # If no nodes found via CSV, try direct directory search
-            if not node_pairs:
-                for root, dirs, files in os.walk(base_path):
-                    root_path = Path(root)
-                    if root_path.name.startswith("node-"):
-                        # Extract node ID from directory name (format: node-XXXXXX-{node_id})
-                        if root_path.name.count('-') >= 2:
-                            node_id = root_path.name.split('-')[-1]
-                            cert_path = root_path / "node.crt"
-                            key_path = root_path / "node.key"
-                            
-                            if cert_path.exists() and key_path.exists():
-                                node_pairs.append((node_id, str(cert_path), str(key_path)))
-        except Exception as e:
-            click.echo(click.style(f"Error accessing directory {base_path}: {str(e)}", fg='yellow'))
+    logger.debug(f"Searching for certificate pairs in {base_path}")
     
+    try:
+        # Find all node folders in node_details structure
+        node_folders = find_node_folders(base_path)
+        logger.debug(f"Found {len(node_folders)} node folders")
+
+        for node_id, folder_path in node_folders:
+            try:
+                crt_path, key_path = find_crt_key_files(folder_path)
+                if crt_path and key_path:
+                    logger.debug(f"Found valid certificate pair for node {node_id}")
+                    node_pairs.append((node_id, str(crt_path), str(key_path)))
+                else:
+                    logger.debug(f"Certificate files not found for node {node_id}")
+            except Exception as e:
+                logger.debug(f"Error processing node folder {folder_path}: {str(e)}")
+                click.echo(click.style(f"Error processing node folder {folder_path}: {str(e)}", fg='yellow'))
+                
+    except Exception as e:
+        logger.debug(f"Error accessing directory {base_path}: {str(e)}")
+        click.echo(click.style(f"Error accessing directory {base_path}: {str(e)}", fg='yellow'))
+    
+    logger.debug(f"Found {len(node_pairs)} total certificate pairs")
     return node_pairs
 
-def get_cert_and_key_paths(base_path: str, node_id: str, is_rainmaker: bool = False) -> Tuple[str, str]:
+@debug_step("Getting certificate and key paths")
+def get_cert_and_key_paths(base_path: str, node_id: str) -> Tuple[str, str]:
     """Find certificate and key paths for a node."""
-    node_pairs = find_node_cert_key_pairs(base_path, is_rainmaker)
+    logger.debug(f"Searching for certificates for node {node_id} in {base_path}")
+    node_pairs = find_node_cert_key_pairs(base_path)
     
     for nodeID, cert_path, key_path in node_pairs:
         if str(nodeID) == str(node_id):
+            logger.debug(f"Found certificates for node {node_id}")
             return cert_path, key_path
             
+    logger.debug(f"No certificates found for node {node_id}")
     raise FileNotFoundError(f"Certificate and key not found for node {node_id}")
 
+@debug_step("Getting root certificate path")
 def get_root_cert_path(config_dir: Path) -> str:
     """Get path to root CA certificate."""
+    logger.debug(f"Looking for root certificate in {config_dir}")
+    
     # First check in config directory
     root_path = config_dir / 'certs' / 'root.pem'
     if root_path.exists():
+        logger.debug(f"Found root certificate in config directory: {root_path}")
         return str(root_path)
         
     # Then check in package directory
     package_root = Path(__file__).resolve().parent.parent.parent
     root_path = package_root / 'certs' / 'root.pem'
     if root_path.exists():
+        logger.debug(f"Found root certificate in package directory: {root_path}")
         return str(root_path)
         
-    raise FileNotFoundError("Root CA certificate not found") 
+    logger.debug("Root certificate not found in any location")
+    raise FileNotFoundError("Root CA certificate not found")
 
 
 # ---------------
-
-def convert_unix_path_to_windows(unix_path, base_path):
-    """Convert Unix-style path to Windows path relative to base_path."""
-    try:
-        relative_path = unix_path.split('esp-rainmaker-admin-cli/')[-1]
-        return str(Path(base_path) / relative_path)
-    except Exception:
-        return unix_path
-
 
 def find_node_folders(base_path):
     """
@@ -283,7 +263,7 @@ def find_node_cert_key_pairs_path(base_path):
 
     return node_pairs
 
-def get_cert_paths_from_direct_path(base_path: str, node_id: str) -> Tuple[str, str]:
+def get_cert_paths_from_direct_path(base_path: str, node_id: str, mac_address: Optional[str] = None) -> Tuple[str, str]:
     """
     Find certificate and key paths for a node when using direct path.
     This is used when --cert-path is provided in CLI.
@@ -291,6 +271,7 @@ def get_cert_paths_from_direct_path(base_path: str, node_id: str) -> Tuple[str, 
     Args:
         base_path: Base directory to search
         node_id: Node ID to find certificates for
+        mac_address: Optional 12-digit alphanumeric MAC address
         
     Returns:
         tuple: (cert_path, key_path)
@@ -300,27 +281,18 @@ def get_cert_paths_from_direct_path(base_path: str, node_id: str) -> Tuple[str, 
     """
     base_path = Path(base_path)
     
-    # First try finding in node_details structure
+    # If MAC address is provided, try finding by MAC first
+    if mac_address:
+        result = find_by_mac_address(base_path, mac_address, node_id)
+        if result:
+            return result
+    
+    # If MAC search failed or wasn't requested, try the node_details structure
     node_folders = find_node_folders(base_path)
     for folder_node_id, folder_path in node_folders:
         if folder_node_id == node_id:
             crt_path, key_path = find_crt_key_files(folder_path)
             if crt_path and key_path:
                 return str(crt_path), str(key_path)
-    
-    # If not found in node_details, try direct path
-    cert_path = base_path / f"{node_id}.crt"
-    key_path = base_path / f"{node_id}.key"
-    
-    if cert_path.exists() and key_path.exists():
-        return str(cert_path), str(key_path)
-        
-    # Try node.crt/node.key in a node-specific directory
-    node_dir = base_path / f"node-{node_id}"
-    if node_dir.exists():
-        cert_path = node_dir / "node.crt"
-        key_path = node_dir / "node.key"
-        if cert_path.exists() and key_path.exists():
-            return str(cert_path), str(key_path)
             
     raise FileNotFoundError(f"Certificate files not found for node {node_id} in {base_path}")
