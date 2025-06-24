@@ -161,7 +161,6 @@ def request(ctx, node_id: str, timeout: int):
         # Track responses and MQTT clients for each node
         responses_received = {node_id: False for node_id in node_ids}
         mqtt_clients = {}
-        valid_nodes_found = False
         logger.debug(f"Initialized response tracking for nodes: {list(responses_received.keys())}")
 
         @debug_step("Publishing status update")
@@ -351,7 +350,6 @@ def request(ctx, node_id: str, timeout: int):
                     click.echo(click.style(f"✗ Failed to connect to node {node_id}", fg='red'), err=True)
                     continue
 
-                valid_nodes_found = True
                 # Store MQTT client reference
                 mqtt_clients[node_id] = mqtt_client
                 logger.debug(f"Stored MQTT client for node {node_id}")
@@ -369,11 +367,6 @@ def request(ctx, node_id: str, timeout: int):
             except Exception as e:
                 logger.debug(f"Error setting up node {node_id}: {str(e)}")
                 click.echo(click.style(f"✗ Error for node {node_id}: {str(e)}", fg='red'), err=True)
-
-        if not valid_nodes_found:
-            logger.debug("No valid nodes found to monitor")
-            click.echo(click.style("✗ No valid nodes found to monitor. Aborting.", fg='red'), err=True)
-            raise click.Abort()
 
         click.echo("\nMonitoring all nodes. Press Ctrl+C to stop...")
         logger.debug("Starting monitoring loop")
