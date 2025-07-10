@@ -145,15 +145,17 @@ async def connect_node(ctx, node_id, broker=None, timeout=None):
 @connection.command('connect')
 @click.option('--node-id', required=True, help='Node ID to connect to')
 @click.option('--timeout', type=int, default=30, help='Connection timeout in seconds')
+@click.option('--persistent', is_flag=True, help='Keep connection alive until terminal is closed or interrupted')
 @click.pass_context
 @debug_log
-def connect(ctx, node_id, timeout):
+def connect(ctx, node_id, timeout, persistent):
     """Connect to a node or multiple nodes.
     
     Examples:
     rm-node connection connect --node-id node123
     rm-node connection connect --node-id "node123,node456,node789"
     rm-node connection connect --node-id node123 --timeout 3600
+    rm-node connection connect --node-id node123 --persistent
     """
     try:
         # Create event loop for async operations
@@ -165,10 +167,17 @@ def connect(ctx, node_id, timeout):
         node_ids = [n.strip() for n in node_id.split(',')]
         logger.debug(f"Processing connection for nodes: {node_ids}")
         
-        if timeout:
+        if timeout and not persistent:
             logger.debug(f"Connection timeout set to {timeout} seconds")
             if len(node_ids) > 1:
                 click.echo(click.style("Note: Timeout will be applied to all connections", fg='yellow'))
+        
+        if persistent:
+            logger.debug("Persistent connection mode enabled")
+            if len(node_ids) > 1:
+                click.echo(click.style("Note: Persistent mode will be applied to all connections", fg='yellow'))
+            # Override timeout to None for persistent connections
+            timeout = None
         
         # Create tasks for each node connection
         tasks = [connect_node(ctx, n, timeout=timeout) for n in node_ids]
@@ -177,16 +186,38 @@ def connect(ctx, node_id, timeout):
         logger.debug("Starting parallel connection tasks")
         results = loop.run_until_complete(asyncio.gather(*tasks))
         
-        # Keep the event loop running if we have a timeout
-        if timeout and any(results):
-            click.echo(click.style("\nKeeping connection alive until timeout...", fg='yellow'))
+        # Keep the event loop running if we have a timeout or persistent mode
+        if (timeout and any(results)) or (persistent and any(results)):
+            if persistent:
+                click.echo(click.style("\nKeeping connection alive in persistent mode. Press Ctrl+C to disconnect and exit.", fg='green'))
+            else:
+                click.echo(click.style("\nKeeping connection alive until timeout...", fg='yellow'))
+            
             try:
-                # Create a future to stop the event loop after timeout
-                stop_future = loop.create_future()
-                loop.call_later(timeout, stop_future.set_result, None)
-                loop.run_until_complete(stop_future)
+                if persistent:
+                    # Keep running indefinitely until interrupted
+                    async def keep_alive():
+                        while True:
+                            await asyncio.sleep(1)
+                    loop.run_until_complete(keep_alive())
+                else:
+                    # Create a future to stop the event loop after timeout
+                    stop_future = loop.create_future()
+                    loop.call_later(timeout, stop_future.set_result, None)
+                    loop.run_until_complete(stop_future)
             except KeyboardInterrupt:
-                click.echo("\nConnection terminated by user")
+                if persistent:
+                    click.echo("\nPersistent connection terminated by user")
+                    # Clean up connections
+                    shared_manager = SharedConnectionManager(ctx.obj['CONFIG_DIR'])
+                    connection_manager = ctx.obj['CONNECTION_MANAGER']
+                    for node in node_ids:
+                        if connection_manager.get_connection(node):
+                            connection_manager.remove_connection(node)
+                            shared_manager.unregister_connection(node)
+                            click.echo(click.style(f"✓ Disconnected from {node}", fg='green'))
+                else:
+                    click.echo("\nConnection terminated by user")
             finally:
                 loop.stop()
                 loop.close()

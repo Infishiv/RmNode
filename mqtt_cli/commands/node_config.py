@@ -1,7 +1,9 @@
 """
 Node configuration and parameters management.
 
-This module provides commands for managing node configuration and parameters.
+This module provides commands for managing node configuration and parameters
+in compliance with ESP RainMaker MQTT swagger specification.
+All parameter commands use the standardized device name -> parameter format.
 """
 import click
 import json
@@ -12,6 +14,7 @@ import uuid
 import os
 import logging
 import shutil
+import requests
 from pathlib import Path
 from ..utils.exceptions import MQTTError
 from ..utils.validators import validate_node_id
@@ -142,6 +145,141 @@ def get_stored_params(node_id: str) -> dict:
         logger.debug(f"Invalid JSON in parameters file: {str(e)}")
         raise MQTTError("Invalid parameters file")
 
+@debug_step("Validating swagger-compliant payload")
+def validate_device_params_payload(payload: dict, device_name: str) -> bool:
+    """Validate that payload follows MQTT swagger specification format.
+    
+    Expected format: {device_name: {param1: value1, param2: value2}}
+    
+    Args:
+        payload: The payload to validate
+        device_name: Expected device name
+        
+    Returns:
+        bool: True if valid
+        
+    Raises:
+        MQTTError: If payload format is invalid
+    """
+    if not isinstance(payload, dict):
+        raise MQTTError("Payload must be a dictionary")
+        
+    if device_name not in payload:
+        raise MQTTError(f"Device '{device_name}' not found in payload")
+        
+    if not isinstance(payload[device_name], dict):
+        raise MQTTError(f"Parameters for device '{device_name}' must be a dictionary")
+        
+    logger.debug(f"Payload validation successful for device: {device_name}")
+    return True
+
+@debug_step("Creating swagger-compliant payload")
+def create_device_params_payload(params: dict, device_name: str) -> dict:
+    """Create MQTT swagger-compliant payload format.
+    
+    Converts: {device_name: {params}} or raw {params}
+    To: {device_name: {params}}
+    
+    Args:
+        params: Parameter dictionary
+        device_name: Target device name
+        
+    Returns:
+        dict: Swagger-compliant payload
+    """
+    # If params already has the device name as key, use it directly
+    if device_name in params and isinstance(params[device_name], dict):
+        payload = {device_name: params[device_name]}
+        logger.debug(f"Using existing device structure for {device_name}")
+    else:
+        # If params is the raw parameter dict, wrap it with device name
+        payload = {device_name: params}
+        logger.debug(f"Wrapping parameters with device name: {device_name}")
+        
+    validate_device_params_payload(payload, device_name)
+    return payload
+
+@debug_step("Creating single parameter payload")
+def create_single_param_payload(device_name: str, param_name: str, param_value: str, param_type: str = 'string') -> dict:
+    """Create swagger-compliant payload for a single parameter.
+    
+    Args:
+        device_name: Name of the device
+        param_name: Name of the parameter
+        param_value: Value of the parameter (as string)
+        param_type: Type of the parameter (string, int, float, bool)
+        
+    Returns:
+        dict: Swagger-compliant payload
+    """
+    # Convert value to appropriate type
+    try:
+        if param_type == 'int':
+            converted_value = int(param_value)
+        elif param_type == 'float':
+            converted_value = float(param_value)
+        elif param_type == 'bool':
+            converted_value = param_value.lower() in ('true', '1', 'yes', 'on')
+        else:  # string or default
+            converted_value = param_value
+            
+        logger.debug(f"Converted parameter {param_name}={param_value} to type {param_type}: {converted_value}")
+    except (ValueError, AttributeError) as e:
+        raise MQTTError(f"Invalid value '{param_value}' for type '{param_type}': {str(e)}")
+    
+    # Create swagger-compliant payload
+    payload = {
+        device_name: {
+            param_name: converted_value
+        }
+    }
+    
+    validate_device_params_payload(payload, device_name)
+    logger.debug(f"Created single parameter payload: {payload}")
+    return payload
+
+@debug_step("Creating multiple parameters payload")
+def create_multi_param_payload(device_name: str, param_data: list) -> dict:
+    """Create swagger-compliant payload for multiple parameters.
+    
+    Args:
+        device_name: Name of the device
+        param_data: List of tuples (param_name, param_value, param_type)
+        
+    Returns:
+        dict: Swagger-compliant payload
+    """
+    device_params = {}
+    
+    for param_name, param_value, param_type in param_data:
+        # Convert value to appropriate type
+        try:
+            if param_type == 'int':
+                converted_value = int(param_value)
+            elif param_type == 'float':
+                converted_value = float(param_value)
+            elif param_type == 'bool':
+                converted_value = param_value.lower() in ('true', '1', 'yes', 'on')
+            else:  # string or default
+                converted_value = param_value
+                
+            device_params[param_name] = converted_value
+            logger.debug(f"Added parameter {param_name}={converted_value} (type: {param_type})")
+        except (ValueError, AttributeError) as e:
+            raise MQTTError(f"Invalid value '{param_value}' for parameter '{param_name}' of type '{param_type}': {str(e)}")
+    
+    # Create swagger-compliant payload
+    payload = {device_name: device_params}
+    validate_device_params_payload(payload, device_name)
+    logger.debug(f"Created multi-parameter payload: {payload}")
+    return payload
+
+def list_available_devices(params: dict) -> list:
+    """List available device names from parameters."""
+    if not isinstance(params, dict):
+        return []
+    return list(params.keys())
+
 @debug_log
 async def ensure_node_connection(ctx, node_id: str) -> bool:
     """Ensure connection to a node is active, connect if needed."""
@@ -158,7 +296,11 @@ async def ensure_node_connection(ctx, node_id: str) -> bool:
 
 @click.group()
 def node():
-    """Node configuration and parameters management commands."""
+    """Node configuration and parameters management commands.
+    
+    All parameter commands comply with ESP RainMaker MQTT swagger specification
+    using the standardized device name -> parameter format.
+    """
     pass
 
 @node.command('config')
@@ -171,6 +313,9 @@ def node():
 @debug_log
 def set_config(ctx, node_id, device_type, config_file, project_name):
     """Set node configuration using predefined templates.
+    
+    This command sets the complete node configuration including device definitions,
+    parameter schemas, and metadata. This is different from parameter updates.
     
     Examples:
         mqtt-cli node config --node-id node123 --device-type light --project-name "Smart Home"
@@ -246,18 +391,26 @@ def set_config(ctx, node_id, device_type, config_file, project_name):
 
 @node.command('params')
 @click.option('--node-id', required=True, help='Node ID to set parameters for')
-@click.option('--params-file', type=click.Path(exists=True), help='JSON file containing parameters')
 @click.option('--device-name', required=True, help='Name of the device to set parameters for')
-@click.option('--use-stored', is_flag=True, help='Use stored parameters for the node')
+@click.option('--params-file', type=click.Path(exists=True), help='JSON file containing parameters')
 @click.option('--remote', is_flag=True, help='Use remote parameters topic instead of local')
+@click.option('--params', multiple=True, help='Parameters in format "name:value:type" (type optional, defaults to string)')
 @click.pass_context
 @debug_log
-def set_params(ctx, node_id: str, params_file: str, device_name: str, use_stored: bool, remote: bool):
+def set_params(ctx, node_id: str, device_name: str, params_file: str, remote: bool, params: tuple):
     """Set parameters for a specific device on a node.
     
+    SWAGGER COMPLIANT: Uses device name -> parameter format as per MQTT specification.
+    
     Examples:
-        mqtt-cli node params --node-id node123 --device-name "Water Heater" --params-file params.json
-        mqtt-cli node params --node-id node123 --device-name "Water Heater" --use-stored --remote
+        # Set multiple parameters
+        mqtt-cli node params --node-id node123 --device-name "Light" --params "brightness:165:int" --params "power:true:bool"
+        
+        # From file (for complex configurations)
+        mqtt-cli node params --node-id node123 --device-name "Light" --params-file params.json
+        
+        # Use remote topic
+        mqtt-cli node params --node-id node123 --device-name "Light" --params "brightness:165:int" --remote
     """
     try:
         # Create event loop for async operations
@@ -275,56 +428,74 @@ def set_params(ctx, node_id: str, params_file: str, device_name: str, use_stored
             logger.debug("No active MQTT connection found")
             click.echo(click.style("✗ No active MQTT connection", fg='red'), err=True)
             sys.exit(1)
-            
-        # Get parameters
-        if use_stored:
+        
+        # Determine parameter source and create payload
+        payload = None
+        
+        # Priority 1: Multiple parameters via --params
+        if params:
+            logger.debug(f"Using parameters: {list(params)}")
             try:
-                logger.debug("Using stored parameters")
-                params = get_stored_params(node_id)
-                click.echo(click.style("✓ Using stored parameters", fg='green'))
+                param_data = []
+                for param_spec in params:
+                    parts = param_spec.split(':')
+                    if len(parts) < 2:
+                        raise MQTTError(f"Invalid parameter format '{param_spec}'. Use 'name:value' or 'name:value:type'")
+                    
+                    p_name = parts[0]
+                    p_value = parts[1] 
+                    p_type = parts[2] if len(parts) > 2 else 'string'
+                    
+                    if p_type not in ['string', 'int', 'float', 'bool']:
+                        raise MQTTError(f"Invalid parameter type '{p_type}'. Use: string, int, float, bool")
+                    
+                    param_data.append((p_name, p_value, p_type))
+                
+                payload = create_multi_param_payload(device_name, param_data)
+                click.echo(click.style(f"Created {len(param_data)} parameters for device {device_name}", fg='green'))
             except MQTTError as e:
-                logger.debug(f"Error with stored parameters: {str(e)}")
                 click.echo(click.style(f"✗ {str(e)}", fg='red'), err=True)
                 sys.exit(1)
-        else:
-            if not params_file:
-                logger.debug("No parameters source specified")
-                click.echo(click.style("✗ Either --params-file or --use-stored must be specified", fg='red'), err=True)
-                sys.exit(1)
                 
-            # Read and validate params file
+        # Priority 2: Use parameters file
+        elif params_file:
             logger.debug(f"Loading parameters from file: {params_file}")
-            with open(params_file, 'r') as f:
-                params = json.load(f)
-                
-        # Basic validation
-        logger.debug("Validating parameters")
-        if not isinstance(params, dict):
-            logger.debug("Parameters must be a dictionary")
-            click.echo(click.style("✗ Parameters must be a dictionary", fg='red'), err=True)
+            try:
+                with open(params_file, 'r') as f:
+                    params_dict = json.load(f)
+                payload = create_device_params_payload(params_dict, device_name)
+                click.echo(click.style(f"Loaded parameters from {params_file}", fg='green'))
+            except (json.JSONDecodeError, FileNotFoundError) as e:
+                click.echo(click.style(f"✗ Error reading params file: {str(e)}", fg='red'), err=True)
+                sys.exit(1)
+            except MQTTError as e:
+                click.echo(click.style(f"✗ {str(e)}", fg='red'), err=True)
+                try:
+                    with open(params_file, 'r') as f:
+                        params_dict = json.load(f)
+                    devices = list_available_devices(params_dict)
+                    if devices:
+                        click.echo(f"Available devices: {', '.join(devices)}")
+                except:
+                    pass
+                sys.exit(1)
+        
+        # No parameter source specified
+        else:
+            click.echo(click.style("No parameter source specified", fg='red'), err=True)
+            click.echo("Choose one of these options:")
+            click.echo("  - Parameters: --params 'name:value:type'")
+            click.echo("  - From file: --params-file FILE")
             sys.exit(1)
-            
-        # Validate device exists in params
-        if device_name not in params:
-            click.echo(click.style(f"✗ Device '{device_name}' not found in parameters", fg='red'), err=True)
-            sys.exit(1)
-
-        # Get device parameters
-        device_params = params[device_name]
 
         # Topic structure based on remote/local
-        topic = f"node/{node_id}/params/{'remote' if remote else 'local'}"
+        topic = f"node/{node_id}/params/local"
         logger.debug(f"Publishing to topic: {topic}")
-
-        # Prepare payload with device name
-        payload = {
-            device_name: device_params
-        }
 
         # Publish parameters
         if mqtt_client.publish(topic, json.dumps(payload), qos=1):
-            click.echo(click.style(f"✓ Set {'remote' if remote else 'local'} parameters for device {device_name} on node {node_id}", fg='green'))
-            click.echo("\nParameters:")
+            click.echo(click.style(f"Set {'remote' if remote else 'local'} parameters for device {device_name} on node {node_id}", fg='green'))
+            click.echo("\nSwagger-compliant payload:")
             click.echo(json.dumps(payload, indent=2))
             return 0
         else:
@@ -348,58 +519,52 @@ def monitor_node(ctx, node_id: str, timeout: int):
     """
     try:
         # Create event loop for async operations
-        logger.debug("Creating event loop for async operations")
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         
         # Ensure connection
-        logger.debug(f"Ensuring connection to node {node_id}")
         if not loop.run_until_complete(ensure_node_connection(ctx, node_id)):
             sys.exit(1)
             
         mqtt_client = ctx.obj.get('MQTT')
         if not mqtt_client:
-            logger.debug("No active MQTT connection found")
             click.echo(click.style("✗ No active MQTT connection", fg='red'), err=True)
             sys.exit(1)
             
-        click.echo(f"Monitoring node {node_id} for {timeout} seconds...")
-        click.echo("Press Ctrl+C to stop...")
-        
+        # Only monitor remote parameters topic
+        topic = f"node/{node_id}/params/remote"
+            
         def on_message(client, userdata, message):
-            try:
-                logger.debug(f"Received message on topic: {message.topic}")
-                payload = message.payload.decode()
-                try:
-                    # Try to parse and pretty print JSON
-                    data = json.loads(payload)
-                    payload = json.dumps(data, indent=2)
-                    logger.debug("Message payload is valid JSON")
-                except json.JSONDecodeError:
-                    logger.debug("Message payload is not JSON format")
-                    pass
-                    
-                click.echo(f"\nTopic: {message.topic}")
-                click.echo(f"Message: {payload}")
-            except Exception as e:
-                logger.debug(f"Error processing message: {str(e)}")
-                click.echo(f"Error processing message: {str(e)}")
+            click.echo(message.payload.decode())
                 
-        # Subscribe to all node-related topics
-        topic = f"{node_id}/#"
-        logger.debug(f"Subscribing to topic: {topic}")
-        mqtt_client.subscribe(topic=topic, callback=on_message)
+        # Subscribe to remote parameters topic
+        if not mqtt_client.subscribe(topic=topic, callback=on_message):
+            click.echo(click.style(f"✗ Failed to subscribe", fg='red'), err=True)
+            sys.exit(1)
+            
+        click.echo("Monitoring started... Press Ctrl+C to stop")
         
-        # Keep the main thread alive for the specified timeout
         try:
-            time.sleep(timeout)
+            start_time = time.time()
+            while True:
+                if time.time() - start_time > timeout:
+                    break
+                    
+                if not mqtt_client.ping():
+                    mqtt_client.reconnect()
+                    mqtt_client.subscribe(topic=topic, callback=on_message)
+                
+                time.sleep(0.1)
+                
         except KeyboardInterrupt:
-            logger.debug("Monitoring stopped by user (Ctrl+C)")
-            click.echo("\nMonitoring stopped")
-            return 0
+            print("\nStopped")
+        finally:
+            try:
+                mqtt_client.unsubscribe(topic)
+            except:
+                pass
             
     except Exception as e:
-        logger.debug(f"Error in monitor_node: {str(e)}")
         click.echo(click.style(f"✗ Error: {str(e)}", fg='red'), err=True)
         sys.exit(1)
 
@@ -564,19 +729,25 @@ def node_disconnected(ctx, node_id, client_id, client_initiated, principal_id, s
 
 @node.command('init-params')
 @click.option('--node-id', required=True, help='Node ID to initialize parameters for')
+@click.option('--device-name', required=True, help='Name of the device to initialize parameters for')
 @click.option('--params-file', type=click.Path(exists=True), help='JSON file containing initial parameters')
-@click.option('--use-stored', is_flag=True, help='Use stored parameters for the node')
+@click.option('--params', multiple=True, help='Parameters in format "name:value:type" (type optional, defaults to string)')
 @click.pass_context
 @debug_log
-def init_params(ctx, node_id: str, params_file: str, use_stored: bool):
-    """Initialize node parameters.
+def init_params(ctx, node_id: str, device_name: str, params_file: str, params: tuple):
+    """Initialize node parameters for a specific device.
+    
+    SWAGGER COMPLIANT: Uses device name -> parameter format as per MQTT specification.
     
     Examples:
-        mqtt-cli node init-params --node-id node123 --params-file init_params.json
-        mqtt-cli node init-params --node-id node123 --use-stored
+        # Initialize multiple parameters
+        mqtt-cli node init-params --node-id node123 --device-name "Light" --params "brightness:50:int" --params "power:false:bool"
+        
+        # From file (for complex configurations)
+        mqtt-cli node init-params --node-id node123 --device-name "Light" --params-file init_params.json
     """
     try:
-        logger.debug(f"Initializing parameters for node {node_id}")
+        logger.debug(f"Initializing parameters for node {node_id}, device {device_name}")
         
         # Create event loop for async operations
         loop = asyncio.new_event_loop()
@@ -592,38 +763,68 @@ def init_params(ctx, node_id: str, params_file: str, use_stored: bool):
             logger.debug("No active MQTT connection found")
             click.echo(click.style("✗ No active MQTT connection", fg='red'), err=True)
             sys.exit(1)
-            
-        # Get parameters
-        if use_stored:
+        
+        # Determine parameter source and create payload
+        payload = None
+        
+        # Priority 1: Multiple parameters via --params
+        if params:
+            logger.debug(f"Using parameters: {list(params)}")
             try:
-                logger.debug("Using stored parameters")
-                params = get_stored_params(node_id)
-                click.echo(click.style("✓ Using stored parameters", fg='green'))
+                param_data = []
+                for param_spec in params:
+                    parts = param_spec.split(':')
+                    if len(parts) < 2:
+                        raise MQTTError(f"Invalid parameter format '{param_spec}'. Use 'name:value' or 'name:value:type'")
+                    
+                    p_name = parts[0]
+                    p_value = parts[1] 
+                    p_type = parts[2] if len(parts) > 2 else 'string'
+                    
+                    if p_type not in ['string', 'int', 'float', 'bool']:
+                        raise MQTTError(f"Invalid parameter type '{p_type}'. Use: string, int, float, bool")
+                    
+                    param_data.append((p_name, p_value, p_type))
+                
+                payload = create_multi_param_payload(device_name, param_data)
+                click.echo(click.style(f"Created {len(param_data)} initialization parameters for device {device_name}", fg='green'))
             except MQTTError as e:
-                logger.debug(f"Error with stored parameters: {str(e)}")
                 click.echo(click.style(f"✗ {str(e)}", fg='red'), err=True)
                 sys.exit(1)
-        else:
-            if not params_file:
-                logger.debug("No parameters source specified")
-                click.echo(click.style("✗ Either --params-file or --use-stored must be specified", fg='red'), err=True)
-                sys.exit(1)
-                
-            # Read and validate params file
+        
+        # Priority 2: Use parameters file
+        elif params_file:
             logger.debug(f"Loading parameters from file: {params_file}")
-            with open(params_file, 'r') as f:
-                params = json.load(f)
+            try:
+                with open(params_file, 'r') as f:
+                    params_dict = json.load(f)
+                payload = create_device_params_payload(params_dict, device_name)
+                click.echo(click.style(f"✓ Loaded parameters from {params_file}", fg='green'))
+            except (json.JSONDecodeError, FileNotFoundError) as e:
+                click.echo(click.style(f"✗ Error reading params file: {str(e)}", fg='red'), err=True)
+                sys.exit(1)
+            except MQTTError as e:
+                click.echo(click.style(f"✗ {str(e)}", fg='red'), err=True)
+                sys.exit(1)
+        
+        # No parameter source specified
+        else:
+            click.echo(click.style("No parameter source specified", fg='red'), err=True)
+            click.echo("Choose one of these options:")
+            click.echo("  - Parameters: --params 'name:value:type'")
+            click.echo("  - From file: --params-file FILE")
+            sys.exit(1)
                 
         # Topic for initial parameters (local only)
         topic = f"node/{node_id}/params/local/init"
         logger.debug(f"Publishing to topic: {topic}")
         
         # Publish parameters
-        if mqtt_client.publish(topic, json.dumps(params), qos=1):
+        if mqtt_client.publish(topic, json.dumps(payload), qos=1):
             logger.debug("Parameters published successfully")
-            click.echo(click.style(f"✓ Initialized parameters for node {node_id}", fg='green'))
-            click.echo("\nParameters:")
-            click.echo(json.dumps(params, indent=2))
+            click.echo(click.style(f"Initialized parameters for device {device_name} on node {node_id}", fg='green'))
+            click.echo("\nSwagger-compliant payload:")
+            click.echo(json.dumps(payload, indent=2))
             return 0
         else:
             logger.debug("Failed to publish parameters")
@@ -637,16 +838,23 @@ def init_params(ctx, node_id: str, params_file: str, use_stored: bool):
 
 @node.command('group-params')
 @click.option('--node-ids', required=True, help='Comma-separated list of node IDs')
+@click.option('--device-name', required=True, help='Name of the device to set parameters for')
 @click.option('--params-file', type=click.Path(exists=True), help='JSON file containing parameters')
-@click.option('--use-stored', is_flag=True, help='Use stored parameters')
+@click.option('--params', multiple=True, help='Parameters in format "name:value:type" (type optional, defaults to string)')
+@click.option('--group-id', required=True, help='Group ID for the parameter update')
 @click.pass_context
 @debug_log
-def group_params(ctx, node_ids: str, params_file: str, use_stored: bool):
-    """Set parameters for a group of nodes.
+def group_params(ctx, node_ids: str, device_name: str, params_file: str, params: tuple, group_id: str):
+    """Set parameters for a specific device across multiple nodes.
+    
+    SWAGGER COMPLIANT: Uses device name -> parameter format as per MQTT specification.
     
     Examples:
-        mqtt-cli node group-params --node-ids "node1,node2,node3" --params-file group_params.json
-        mqtt-cli node group-params --node-ids "node1,node2,node3" --use-stored
+        # Set multiple parameters across multiple nodes
+        mqtt-cli node group-params --node-ids "node1,node2,node3" --device-name "Light" --params "brightness:75:int" --params "power:true:bool" --group-id "group1"
+        
+        # From file (for complex configurations)
+        mqtt-cli node group-params --node-ids "node1,node2,node3" --device-name "Light" --params-file group_params.json --group-id "group1"
     """
     try:
         # Split node IDs
@@ -657,27 +865,66 @@ def group_params(ctx, node_ids: str, params_file: str, use_stored: bool):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         
-        # Get parameters
-        if use_stored:
+        # Determine parameter source and create payload
+        payload = None
+        
+        # Priority 1: Multiple parameters via --params
+        if params:
+            logger.debug(f"Using parameters: {list(params)}")
             try:
-                logger.debug("Using stored parameters")
-                params = get_stored_params(node_list[0])  # Use first node's params as template
-                click.echo(click.style("✓ Using stored parameters", fg='green'))
+                param_data = []
+                for param_spec in params:
+                    parts = param_spec.split(':')
+                    if len(parts) < 2:
+                        raise MQTTError(f"Invalid parameter format '{param_spec}'. Use 'name:value' or 'name:value:type'")
+                    
+                    p_name = parts[0]
+                    p_value = parts[1] 
+                    p_type = parts[2] if len(parts) > 2 else 'string'
+                    
+                    if p_type not in ['string', 'int', 'float', 'bool']:
+                        raise MQTTError(f"Invalid parameter type '{p_type}'. Use: string, int, float, bool")
+                    
+                    param_data.append((p_name, p_value, p_type))
+                
+                payload = create_multi_param_payload(device_name, param_data)
+                click.echo(click.style(f"Created {len(param_data)} group parameters for device {device_name}", fg='green'))
             except MQTTError as e:
-                logger.debug(f"Error with stored parameters: {str(e)}")
-                click.echo(click.style(f"✗ {str(e)}", fg='red'), err=True)
+                click.echo(click.style(f"Error: {str(e)}", fg='red'), err=True)
                 sys.exit(1)
-        else:
-            if not params_file:
-                logger.debug("No parameters source specified")
-                click.echo(click.style("✗ Either --params-file or --use-stored must be specified", fg='red'), err=True)
-                sys.exit(1)
-                
-            # Read and validate params file
+        
+        # Priority 2: Use parameters file
+        elif params_file:
             logger.debug(f"Loading parameters from file: {params_file}")
-            with open(params_file, 'r') as f:
-                params = json.load(f)
-                
+            try:
+                with open(params_file, 'r') as f:
+                    params_dict = json.load(f)
+                payload = create_device_params_payload(params_dict, device_name)
+                click.echo(click.style(f"Loaded parameters from {params_file}", fg='green'))
+            except (json.JSONDecodeError, FileNotFoundError) as e:
+                click.echo(click.style(f"Error reading params file: {str(e)}", fg='red'), err=True)
+                sys.exit(1)
+            except MQTTError as e:
+                click.echo(click.style(f"Error: {str(e)}", fg='red'), err=True)
+                sys.exit(1)
+        
+        # No parameter source specified
+        else:
+            click.echo(click.style("No parameter source specified", fg='red'), err=True)
+            click.echo("Choose one of these options:")
+            click.echo("  - Parameters: --params 'name:value:type'")
+            click.echo("  - From file: --params-file FILE")
+            sys.exit(1)
+        
+        # Display what will be sent
+        click.echo(click.style(f"Setting parameters for device '{device_name}' on {len(node_list)} nodes with group ID '{group_id}'", fg='blue'))
+        click.echo("\nSwagger-compliant payload:")
+        click.echo(json.dumps(payload, indent=2))
+        click.echo()
+        
+        success_count = 0
+        failed_nodes = []
+        
         # Process each node
         for node_id in node_list:
             logger.debug(f"Processing node: {node_id}")
@@ -686,32 +933,46 @@ def group_params(ctx, node_ids: str, params_file: str, use_stored: bool):
                 logger.debug(f"Ensuring connection to node {node_id}")
                 if not loop.run_until_complete(ensure_node_connection(ctx, node_id)):
                     logger.debug(f"Skipping node {node_id} due to connection failure")
+                    failed_nodes.append(f"{node_id} (connection failed)")
                     continue
                     
                 mqtt_client = ctx.obj.get('MQTT')
                 if not mqtt_client:
                     logger.debug(f"No active MQTT connection for node {node_id}")
-                    click.echo(click.style(f"✗ No active MQTT connection for node {node_id}", fg='red'), err=True)
+                    failed_nodes.append(f"{node_id} (no MQTT connection)")
                     continue
                     
-                # Topic for group parameters (local only)
-                topic = f"node/{node_id}/params/local/group"
+                # Topic for group parameters with group ID
+                topic = f"node/{node_id}/params/local/{group_id}"
                 logger.debug(f"Publishing to topic: {topic}")
                 
                 # Publish parameters
-                if mqtt_client.publish(topic, json.dumps(params), qos=1):
+                if mqtt_client.publish(topic, json.dumps(payload), qos=1):
                     logger.debug(f"Parameters published successfully for node {node_id}")
-                    click.echo(click.style(f"✓ Updated parameters for node {node_id}", fg='green'))
+                    click.echo(click.style(f"Updated parameters for device {device_name} on node {node_id}", fg='green'))
+                    success_count += 1
                 else:
                     logger.debug(f"Failed to publish parameters for node {node_id}")
-                    click.echo(click.style(f"✗ Failed to update parameters for node {node_id}", fg='red'), err=True)
+                    failed_nodes.append(f"{node_id} (publish failed)")
                     
             except Exception as e:
                 logger.debug(f"Error processing node {node_id}: {str(e)}")
-                click.echo(click.style(f"✗ Error for node {node_id}: {str(e)}", fg='red'), err=True)
+                failed_nodes.append(f"{node_id} ({str(e)})")
                 continue
+        
+        # Summary
+        click.echo("\n" + "="*50)
+        click.echo(click.style(f"Successfully updated: {success_count}/{len(node_list)} nodes", fg='green'))
+        
+        if failed_nodes:
+            click.echo(click.style(f"Failed nodes:", fg='red'))
+            for failed in failed_nodes:
+                click.echo(f"  - {failed}")
+        
+        if success_count == 0:
+            sys.exit(1)
                 
     except Exception as e:
         logger.debug(f"Error in group_params: {str(e)}")
-        click.echo(click.style(f"✗ Error: {str(e)}", fg='red'), err=True)
+        click.echo(click.style(f"Error: {str(e)}", fg='red'), err=True)
         sys.exit(1) 

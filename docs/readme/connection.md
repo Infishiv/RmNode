@@ -13,6 +13,7 @@ rm-node connection connect [OPTIONS]
 Options:
 - `--node-id`: Node ID(s) to connect to (required)
 - `--timeout`: Connection timeout in seconds
+- `--persistent`: Keep connection alive until terminal is closed or interrupted
 - `--broker`: Override default MQTT broker URL
 
 Examples:
@@ -20,6 +21,7 @@ Examples:
 rm-node connection connect --node-id node123
 rm-node connection connect --node-id "node123,node456,node789"
 rm-node connection connect --node-id node123 --timeout 3600
+rm-node connection connect --node-id node123 --persistent
 rm-node connection connect --node-id node123 --broker mqtt://custom-broker.example.com
 ```
 
