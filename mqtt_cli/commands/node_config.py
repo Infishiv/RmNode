@@ -575,12 +575,6 @@ def monitor_node(ctx, node_id: str, timeout: int):
         click.echo(click.style(f"✗ Error: {str(e)}", fg='red'), err=True)
         sys.exit(1)
 
-@node.group()
-def presence():
-    """Node presence management commands."""
-    pass
-
-
 
 @node.command('init-params')
 @click.option('--node-id', required=True, help='Node ID to initialize parameters for')
