@@ -9,7 +9,7 @@ from pathlib import Path
 
 # Import command groups
 from .commands.connection import connection
-from .commands.messaging import messaging
+
 from .commands.device import device
 from .commands.node_config import node
 from .commands.time_series import tsdata
@@ -93,7 +93,6 @@ def cli(ctx, config_dir, debug, broker, cert_path, mac):
 
 # Add command groups
 cli.add_command(connection)
-cli.add_command(messaging)
 cli.add_command(device)
 cli.add_command(node)
 cli.add_command(tsdata)

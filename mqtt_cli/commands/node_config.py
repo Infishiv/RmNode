@@ -305,7 +305,7 @@ def node():
 
 @node.command('config')
 @click.option('--node-id', required=True, help='Node ID to configure')
-@click.option('--device-type', type=click.Choice(['light', 'heater', 'washer']), required=True, 
+@click.option('--device-type', type=click.Choice(['light', 'heater', 'washer']), 
               help='Type of device to configure')
 @click.option('--config-file', type=click.Path(exists=True), help='Custom JSON file containing node configuration')
 @click.option('--project-name', help='Project name for the device')
@@ -317,11 +317,22 @@ def set_config(ctx, node_id, device_type, config_file, project_name):
     This command sets the complete node configuration including device definitions,
     parameter schemas, and metadata. This is different from parameter updates.
     
+    You must provide either --device-type OR --config-file, but not both.
+    
     Examples:
         mqtt-cli node config --node-id node123 --device-type light --project-name "Smart Home"
-        mqtt-cli node config --node-id node123 --device-type heater --config-file custom_config.json
+        mqtt-cli node config --node-id node123 --config-file custom_config.json
     """
     try:
+        # Validate mutually exclusive options
+        if device_type and config_file:
+            click.echo(click.style("✗ Cannot specify both --device-type and --config-file. Choose one.", fg='red'), err=True)
+            sys.exit(1)
+        
+        if not device_type and not config_file:
+            click.echo(click.style("✗ Must specify either --device-type or --config-file.", fg='red'), err=True)
+            sys.exit(1)
+        
         # Create event loop for async operations
         logger.debug("Creating event loop for async operations")
         loop = asyncio.new_event_loop()
@@ -393,11 +404,10 @@ def set_config(ctx, node_id, device_type, config_file, project_name):
 @click.option('--node-id', required=True, help='Node ID to set parameters for')
 @click.option('--device-name', required=True, help='Name of the device to set parameters for')
 @click.option('--params-file', type=click.Path(exists=True), help='JSON file containing parameters')
-@click.option('--remote', is_flag=True, help='Use remote parameters topic instead of local')
 @click.option('--params', multiple=True, help='Parameters in format "name:value:type" (type optional, defaults to string)')
 @click.pass_context
 @debug_log
-def set_params(ctx, node_id: str, device_name: str, params_file: str, remote: bool, params: tuple):
+def set_params(ctx, node_id: str, device_name: str, params_file: str, params: tuple):
     """Set parameters for a specific device on a node.
     
     SWAGGER COMPLIANT: Uses device name -> parameter format as per MQTT specification.
@@ -408,9 +418,6 @@ def set_params(ctx, node_id: str, device_name: str, params_file: str, remote: bo
         
         # From file (for complex configurations)
         mqtt-cli node params --node-id node123 --device-name "Light" --params-file params.json
-        
-        # Use remote topic
-        mqtt-cli node params --node-id node123 --device-name "Light" --params "brightness:165:int" --remote
     """
     try:
         # Create event loop for async operations
@@ -488,13 +495,13 @@ def set_params(ctx, node_id: str, device_name: str, params_file: str, remote: bo
             click.echo("  - From file: --params-file FILE")
             sys.exit(1)
 
-        # Topic structure based on remote/local
+        # Topic structure (always local)
         topic = f"node/{node_id}/params/local"
         logger.debug(f"Publishing to topic: {topic}")
 
         # Publish parameters
         if mqtt_client.publish(topic, json.dumps(payload), qos=1):
-            click.echo(click.style(f"Set {'remote' if remote else 'local'} parameters for device {device_name} on node {node_id}", fg='green'))
+            click.echo(click.style(f"Set local parameters for device {device_name} on node {node_id}", fg='green'))
             click.echo("\nSwagger-compliant payload:")
             click.echo(json.dumps(payload, indent=2))
             return 0
@@ -573,159 +580,7 @@ def presence():
     """Node presence management commands."""
     pass
 
-@presence.command('connected')
-@click.option('--node-id', required=True, help='Node ID to mark as connected')
-@click.option('--client-id', default='rainmaker-node', help='ID of the connected device')
-@click.option('--client-initiated', is_flag=True, default=True, help='Whether the disconnect was initiated by the client')
-@click.option('--principal-id', help='Principal identifier (certificate ID) of the device')
-@click.option('--session-id', help='Session identifier for the connection')
-@click.option('--ip-address', default='192.168.1.100', help='IP address of the connected device')
-@click.option('--version', type=int, default=0, help='Version number of the event')
-@click.pass_context
-@debug_log
-def node_connected(ctx, node_id, client_id, client_initiated, principal_id, session_id, ip_address, version):
-    """Mark a node as connected.
-    
-    Example: mqtt-cli node presence connected --node-id node123
-    """
-    try:
-        logger.debug(f"Marking node {node_id} as connected")
-        logger.debug(f"Connection details: client_id={client_id}, ip={ip_address}, session={session_id}")
-        
-        # Create event loop for async operations
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        # Ensure connection
-        logger.debug(f"Ensuring connection to node {node_id}")
-        if not loop.run_until_complete(ensure_node_connection(ctx, node_id)):
-            sys.exit(1)
-            
-        mqtt_client = ctx.obj.get('MQTT')
-        if not mqtt_client:
-            click.echo(click.style("✗ No active MQTT connection", fg='red'), err=True)
-            return
 
-        # Get certificate ID from cert file if not provided
-        if not principal_id:
-            try:
-                config_manager = ConfigManager(ctx.obj['CONFIG_DIR'])
-                cert_paths = config_manager.get_node_paths(node_id)
-                if cert_paths:
-                    cert_path = cert_paths[0]
-                    # Extract certificate ID from the path
-                    principal_id = cert_path.split('/')[-2].split('-')[-1]
-            except Exception:
-                principal_id = node_id
-
-        # Generate session ID if not provided
-        if not session_id:
-            session_id = str(uuid.uuid4())
-
-        # Prepare payload according to AWS IoT Core presence event schema
-        payload = {
-            "clientId": client_id,
-            "clientInitiatedDisconnect": client_initiated,
-            "eventType": "connected",
-            "principalIdentifier": principal_id,
-            "sessionIdentifier": session_id,
-            "timestamp": int(time.time() * 1000),
-            "versionNumber": version,
-            "ipAddress": ip_address
-        }
-
-        # AWS IoT Core presence event topic
-        topic = f"$aws/events/presence/connected/{node_id}"
-        
-        # Publish event
-        if mqtt_client.publish(topic, json.dumps(payload), qos=1):
-            click.echo(click.style(f"✓ Published connected event for node {node_id}", fg='green'))
-            click.echo("\nPayload:")
-            click.echo(json.dumps(payload, indent=2))
-        else:
-            click.echo(click.style("✗ Failed to publish connected event", fg='red'), err=True)
-        
-    except Exception as e:
-        logger.debug(f"Error in node_connected: {str(e)}")
-        click.echo(click.style(f"✗ Error: {str(e)}", fg='red'), err=True)
-        sys.exit(1)
-
-@presence.command('disconnected')
-@click.option('--node-id', required=True, help='Node ID to mark as disconnected')
-@click.option('--client-id', default='rainmaker-node', help='ID of the disconnected device')
-@click.option('--client-initiated', is_flag=True, default=True, help='Whether the disconnect was initiated by the client')
-@click.option('--principal-id', help='Principal identifier (certificate ID) of the device')
-@click.option('--session-id', help='Session identifier for the connection')
-@click.option('--disconnect-reason', default='CLIENT_INITIATED_DISCONNECT', help='Reason for disconnection')
-@click.option('--version', type=int, default=0, help='Version number of the event')
-@click.pass_context
-@debug_log
-def node_disconnected(ctx, node_id, client_id, client_initiated, principal_id, session_id, disconnect_reason, version):
-    """Mark a node as disconnected.
-    
-    Example: mqtt-cli node presence disconnected --node-id node123
-    """
-    try:
-        logger.debug(f"Marking node {node_id} as disconnected")
-        logger.debug(f"Disconnection details: client_id={client_id}, reason={disconnect_reason}, session={session_id}")
-        
-        # Create event loop for async operations
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        # Ensure connection
-        logger.debug(f"Ensuring connection to node {node_id}")
-        if not loop.run_until_complete(ensure_node_connection(ctx, node_id)):
-            sys.exit(1)
-            
-        mqtt_client = ctx.obj.get('MQTT')
-        if not mqtt_client:
-            click.echo(click.style("✗ No active MQTT connection", fg='red'), err=True)
-            return
-
-        # Get certificate ID from cert file if not provided
-        if not principal_id:
-            try:
-                config_manager = ConfigManager(ctx.obj['CONFIG_DIR'])
-                cert_paths = config_manager.get_node_paths(node_id)
-                if cert_paths:
-                    cert_path = cert_paths[0]
-                    # Extract certificate ID from the path
-                    principal_id = cert_path.split('/')[-2].split('-')[-1]
-            except Exception:
-                principal_id = node_id
-
-        # Generate session ID if not provided
-        if not session_id:
-            session_id = str(uuid.uuid4())
-
-        # Prepare payload according to AWS IoT Core presence event schema
-        payload = {
-            "clientId": client_id,
-            "clientInitiatedDisconnect": client_initiated,
-            "eventType": "disconnected",
-            "principalIdentifier": principal_id,
-            "sessionIdentifier": session_id,
-            "timestamp": int(time.time() * 1000),
-            "versionNumber": version,
-            "disconnectReason": disconnect_reason
-        }
-
-        # AWS IoT Core presence event topic
-        topic = f"$aws/events/presence/disconnected/{node_id}"
-        
-        # Publish event
-        if mqtt_client.publish(topic, json.dumps(payload), qos=1):
-            click.echo(click.style(f"✓ Published disconnected event for node {node_id}", fg='green'))
-            click.echo("\nPayload:")
-            click.echo(json.dumps(payload, indent=2))
-        else:
-            click.echo(click.style("✗ Failed to publish disconnected event", fg='red'), err=True)
-        
-    except Exception as e:
-        logger.debug(f"Error in node_disconnected: {str(e)}")
-        click.echo(click.style(f"✗ Error: {str(e)}", fg='red'), err=True)
-        sys.exit(1)
 
 @node.command('init-params')
 @click.option('--node-id', required=True, help='Node ID to initialize parameters for')
