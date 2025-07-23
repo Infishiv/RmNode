@@ -174,7 +174,7 @@ def send_command(ctx, node_id: str, json_payload: str):
     This command publishes to node/<node_id>/from-node topic to simulate
     messages sent from the device to the cloud infrastructure.
     
-    Payload is automatically converted to Binary TLV format as required by ESP RainMaker.
+    Payload is automatically converted to Binary TLV format.
     Expected format: {"device_name": {"param1": value1, "param2": value2}}
     
     Examples:

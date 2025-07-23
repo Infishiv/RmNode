@@ -1,5 +1,7 @@
 """
-Time series data commands for MQTT CLI.
+Time series data commands for ESP RainMaker.
+
+This module provides commands for managing time series data operations.
 """
 import click
 import json
@@ -51,12 +53,17 @@ async def ensure_node_connection(ctx, node_id: str) -> bool:
 @click.pass_context
 @debug_log
 def send(ctx, node_id, param_name, value, data_type, simple, expiry_days, basic_ingest):
-    """Send time series data point.
+    """Send time series data for a parameter.
     
     Examples:
-    rm-node tsdata send --node-id node123 --param-name temperature --value 25.5
-    rm-node tsdata send --node-id node123 --param-name status --value true --data-type bool
-    rm-node tsdata batch --node-id node123 --param-name humidity --values 45 48 52 --interval 60
+        # Send temperature reading
+        mqtt-cli tsdata send --node-id node123 --param-name temperature --value 25.5 --data-type float
+        
+        # Send boolean status
+        mqtt-cli tsdata send --node-id node123 --param-name status --value true --data-type bool
+        
+        # Send with expiry
+        mqtt-cli tsdata send --node-id node123 --param-name temp --value 25.5 --simple --expiry-days 30
     """
     try:
         # Create event loop for async operations
