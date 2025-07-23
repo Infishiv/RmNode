@@ -34,7 +34,43 @@ CONFIGS_DIR = Path(__file__).parent.parent.parent / 'configs'
 DEVICE_TEMPLATES = {
     'light': 'light_config.json',
     'heater': 'heater_config.json',
-    'washer': 'washer_config.json'
+    'washer': 'washer_config.json',
+    'light_cmd': 'light_cmd.json'  # Added light_cmd template
+}
+
+# Light command configuration template based on ESP RainMaker specification
+LIGHT_CMD_TEMPLATE = {
+    "node_id": "THING_NAME",
+    "config_version": "2019-09-11",
+    "info": {
+        "name": "My_Light",
+        "fw_version": "2.0",
+        "type": "LightBulb",
+        "subtype": "Esp-Bulb",
+        "project_name": "Esp test"
+    },
+    "attributes": [{
+        "name": "cmd-resp",
+        "value": "1"
+    }],
+    "devices": [{
+        "name": "Light",
+        "dynamic_params": [{
+            "name": "output",
+            "data_type": "bool",
+            "permissions": ["read", "write"],
+            "ui-type": "esp-ui-toggle"
+        }, {
+            "name": "brightness",
+            "data_type": "int",
+            "permissions": ["read", "write"],
+            "bounds": {
+                "min": 0,
+                "max": 100
+            },
+            "ui-type": "esp-ui-slider"
+        }]
+    }]
 }
 
 @debug_step("Creating node configuration")
@@ -43,7 +79,7 @@ def create_node_specific_config(node_id: str, device_type: str, project_name: st
     
     Args:
         node_id: The ID of the node
-        device_type: Type of device (light, heater, washer)
+        device_type: Type of device (light, heater, washer, light_cmd)
         project_name: Optional project name
         
     Returns:
@@ -305,7 +341,7 @@ def node():
 
 @node.command('config')
 @click.option('--node-id', required=True, help='Node ID to configure')
-@click.option('--device-type', type=click.Choice(['light', 'heater', 'washer']), 
+@click.option('--device-type', type=click.Choice(['light', 'heater', 'washer', 'light_cmd']), 
               help='Type of device to configure')
 @click.option('--config-file', type=click.Path(exists=True), help='Custom JSON file containing node configuration')
 @click.option('--project-name', help='Project name for the device')
@@ -321,6 +357,7 @@ def set_config(ctx, node_id, device_type, config_file, project_name):
     
     Examples:
         mqtt-cli node config --node-id node123 --device-type light --project-name "Smart Home"
+        mqtt-cli node config --node-id node123 --device-type light_cmd  # For command-response config
         mqtt-cli node config --node-id node123 --config-file custom_config.json
     """
     try:
