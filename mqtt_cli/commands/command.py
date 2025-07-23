@@ -165,21 +165,17 @@ def process_received_message(message) -> dict:
 
 @node_command.command('send-command')
 @click.option('--node-id', required=True, help='Node ID to send command from')
-@click.option('--json-payload', required=True, help='JSON payload to send from node to cloud (converted to Binary TLV format)')
+@click.option('--json-payload', required=True, type=click.Path(exists=True), help='Path to JSON file to send from node to cloud')
 @click.pass_context
 @debug_log
 def send_command(ctx, node_id: str, json_payload: str):
-    """Send command requests or responses from nodes to the cloud.
+    """Send a JSON file as a command from node to cloud.
     
-    This command publishes to node/<node_id>/from-node topic to simulate
-    messages sent from the device to the cloud infrastructure.
-    
-    Payload is automatically converted to Binary TLV format.
-    Expected format: {"device_name": {"param1": value1, "param2": value2}}
+    This command publishes the contents of a JSON file to node/<node_id>/from-node topic.
+    No TLV or binary conversion is performed; the file is sent as plain JSON.
     
     Examples:
-        node-command send-command --node-id node123 --json-payload '{"Light": {"output": true, "brightness": 75}}'
-        node-command send-command --node-id node123 --json-payload '{"status": "online", "temperature": 25.5}'
+        node-command send-command --node-id node123 --json-payload ./payload.json
     """
     try:
         # Create event loop for async operations
@@ -199,42 +195,34 @@ def send_command(ctx, node_id: str, json_payload: str):
             click.echo(click.style("✗ No MQTT client available", fg='red'), err=True)
             sys.exit(1)
 
-        # Validate and convert JSON payload to Binary TLV format
+        # Read and validate JSON file
         try:
-            logger.debug(f"Converting JSON payload to Binary TLV: {json_payload}")
-            payload_dict = json.loads(json_payload)
-            tlv_binary_payload = convert_payload_for_send(payload_dict)
-        except json.JSONDecodeError as e:
-            logger.debug(f"Invalid JSON payload: {str(e)}")
-            click.echo(click.style(f"✗ Invalid JSON payload: {str(e)}", fg='red'), err=True)
-            sys.exit(1)
-        except MQTTError as e:
-            logger.debug(f"TLV conversion error: {str(e)}")
-            click.echo(click.style(f"✗ {str(e)}", fg='red'), err=True)
+            logger.debug(f"Reading JSON file: {json_payload}")
+            with open(json_payload, 'r') as f:
+                payload = json.load(f)
+        except Exception as e:
+            logger.debug(f"Invalid JSON file: {str(e)}")
+            click.echo(click.style(f"✗ Invalid JSON file: {str(e)}", fg='red'), err=True)
             sys.exit(1)
         
-        # Publish to from-node topic with binary TLV payload
+        # Publish to from-node topic as JSON
         topic = f"node/{node_id}/from-node"
-        logger.debug(f"Publishing Binary TLV to topic: {topic}")
-        
-        # Use the binary payload directly (MQTT client should handle bytes)
-        if mqtt_client.publish(topic, tlv_binary_payload, qos=1):
-            logger.debug("Binary TLV command published successfully")
-            click.echo(click.style(f"✓ Sent Binary TLV command from node {node_id} to cloud", fg='green'))
+        logger.debug(f"Publishing JSON to topic: {topic}")
+        if mqtt_client.publish(topic, json.dumps(payload), qos=1):
+            logger.debug("JSON command published successfully")
+            click.echo(click.style(f"✓ Sent JSON command from node {node_id} to cloud", fg='green'))
             click.echo("\nCommand Details:")
             click.echo("-" * 60)
             click.echo(f"Topic: {topic}")
             click.echo(f"Node ID: {node_id}")
-            click.echo(f"Format: Binary TLV (Tag, Length, Value)")
-            click.echo(f"Binary Size: {len(tlv_binary_payload)} bytes")
-            click.echo(f"Binary Hex: {tlv_binary_payload.hex()}")
-            click.echo("\nOriginal JSON Payload:")
-            click.echo(json.dumps(payload_dict, indent=2))
+            click.echo(f"Format: JSON")
+            click.echo("\nPayload:")
+            click.echo(json.dumps(payload, indent=2))
             click.echo("-" * 60)
             return 0
         else:
-            logger.debug("Failed to publish Binary TLV command")
-            raise MQTTError("Failed to send Binary TLV command")
+            logger.debug("Failed to publish JSON command")
+            raise MQTTError("Failed to send JSON command")
             
     except MQTTError as e:
         logger.debug(f"MQTT error in send_command: {str(e)}")
