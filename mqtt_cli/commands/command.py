@@ -41,41 +41,68 @@ async def ensure_node_connection(ctx, node_id: str) -> bool:
 
 @debug_step("Converting payload for transmission")
 def convert_payload_for_send(payload: dict) -> bytearray:
-    """Convert payload to Binary TLV format before sending.
+    """Convert payload to Binary TLV format for node/<node_id>/from-node topic.
     
-    This function converts JSON payload to Binary TLV (Tag, Length, Value) format
-    as required by ESP RainMaker MQTT specification for from-node topic.
+    According to ESP RainMaker MQTT specification:
+    Topic: node/<node_id>/from-node
+    Purpose: Command requests or responses sent from nodes to the cloud
+    Format: Binary TLV (Tag, Length, Value)
     
-    TLV Format:
-    - Tag: 1 byte (identifies the field type)
-    - Length: 2 bytes (length of value in network byte order)
-    - Value: variable length data
+    TLV Structure:
+    - Tag (1 byte): Command type identifier
+        0x01: Command Request
+        0x02: Command Response
+    - Length (2 bytes): Length of the value in network byte order (big-endian)
+    - Value (variable): The actual command data in JSON format
     
     Returns:
-        bytearray: The TLV formatted data as required by AWS IoT SDK
+        bytearray: Binary TLV formatted data as per ESP RainMaker specification
     """
     try:
         import struct
         
-        # Convert JSON to TLV binary format
+        # Convert payload to JSON string
         if isinstance(payload, dict):
+            # Check if this is a command request or response
+            if 'cmd' in payload or 'command' in payload:
+                tag = 0x01  # Command Request
+            else:
+                tag = 0x02  # Command Response
             json_payload = json.dumps(payload)
         else:
-            json_payload = json.dumps(json.loads(str(payload)))
+            # If not a dict, try to parse as JSON first
+            try:
+                parsed = json.loads(str(payload))
+                if 'cmd' in parsed or 'command' in parsed:
+                    tag = 0x01  # Command Request
+                else:
+                    tag = 0x02  # Command Response
+                json_payload = json.dumps(parsed)
+            except json.JSONDecodeError:
+                raise MQTTError("Payload must be a valid JSON object with command information")
         
-        # Create TLV structure
-        # Tag 0x01 = JSON payload data
-        tag = 0x01
+        # Convert JSON to UTF-8 bytes
         value_bytes = json_payload.encode('utf-8')
         length = len(value_bytes)
         
-        # Pack as binary: Tag(1 byte) + Length(2 bytes, big-endian) + Value
+        if length > 65535:  # 2^16 - 1, maximum value for 2 bytes
+            raise MQTTError("Command payload too large (maximum 65535 bytes)")
+        
+        # Create Binary TLV:
+        # - Tag: 1 byte (0x01 for request, 0x02 for response)
+        # - Length: 2 bytes in network byte order (big-endian)
+        # - Value: JSON bytes
         tlv_binary = struct.pack('>BH', tag, length) + value_bytes
         
-        # Convert to bytearray as required by AWS IoT SDK
+        # Convert to bytearray for AWS IoT SDK
         tlv_bytearray = bytearray(tlv_binary)
         
-        logger.debug(f"Converted to Binary TLV format: Tag=0x{tag:02x}, Length={length}, Value={json_payload}")
+        logger.debug(
+            f"Converted to Binary TLV format:\n"
+            f"  Tag: 0x{tag:02x} ({'Command Request' if tag == 0x01 else 'Command Response'})\n"
+            f"  Length: {length} bytes\n"
+            f"  Value: {json_payload}"
+        )
         return tlv_bytearray
         
     except (json.JSONDecodeError, TypeError, struct.error) as e:
