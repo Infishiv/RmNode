@@ -166,16 +166,21 @@ def process_received_message(message) -> dict:
 @node_command.command('send-command')
 @click.option('--node-id', required=True, help='Node ID to send command from')
 @click.option('--json-payload', required=True, type=click.Path(exists=True), help='Path to JSON file to send from node to cloud')
+@click.option('--format', type=click.Choice(['json', 'tlv']), default='json', help='Payload format: json (default) or tlv (binary)')
 @click.pass_context
 @debug_log
-def send_command(ctx, node_id: str, json_payload: str):
+def send_command(ctx, node_id: str, json_payload: str, format: str):
     """Send a JSON file as a command from node to cloud.
     
     This command publishes the contents of a JSON file to node/<node_id>/from-node topic.
-    No TLV or binary conversion is performed; the file is sent as plain JSON.
+    Supports both JSON and TLV (Binary) formats.
+    
+    The TLV format converts JSON to Binary TLV (Tag, Length, Value) format as required
+    by ESP RainMaker MQTT specification for from-node topic.
     
     Examples:
-        node-command send-command --node-id node123 --json-payload ./payload.json
+        node-command send-command --node-id node123 --json-payload ./payload.json --format json
+        node-command send-command --node-id node123 --json-payload ./payload.json --format tlv
     """
     try:
         # Create event loop for async operations
@@ -199,30 +204,49 @@ def send_command(ctx, node_id: str, json_payload: str):
         try:
             logger.debug(f"Reading JSON file: {json_payload}")
             with open(json_payload, 'r') as f:
-                payload = json.load(f)
+                payload_data = json.load(f)
         except Exception as e:
             logger.debug(f"Invalid JSON file: {str(e)}")
             click.echo(click.style(f"✗ Invalid JSON file: {str(e)}", fg='red'), err=True)
             sys.exit(1)
         
-        # Publish to from-node topic as JSON
+        # Convert payload based on format
+        if format == 'tlv':
+            logger.debug("Converting payload to TLV format")
+            try:
+                tlv_payload = convert_payload_for_send(payload_data)
+                final_payload = tlv_payload
+                format_display = "Binary TLV"
+            except Exception as e:
+                logger.debug(f"TLV conversion failed: {str(e)}")
+                click.echo(click.style(f"✗ TLV conversion failed: {str(e)}", fg='red'), err=True)
+                sys.exit(1)
+        else:  # json format
+            logger.debug("Using JSON format")
+            final_payload = json.dumps(payload_data)
+            format_display = "JSON"
+        
+        # Publish to from-node topic
         topic = f"node/{node_id}/from-node"
-        logger.debug(f"Publishing JSON to topic: {topic}")
-        if mqtt_client.publish(topic, json.dumps(payload), qos=1):
-            logger.debug("JSON command published successfully")
-            click.echo(click.style(f"✓ Sent JSON command from node {node_id} to cloud", fg='green'))
+        logger.debug(f"Publishing {format} to topic: {topic}")
+        if mqtt_client.publish(topic, final_payload, qos=1):
+            logger.debug(f"{format.upper()} command published successfully")
+            click.echo(click.style(f"✓ Sent {format.upper()} command from node {node_id} to cloud", fg='green'))
             click.echo("\nCommand Details:")
             click.echo("-" * 60)
             click.echo(f"Topic: {topic}")
             click.echo(f"Node ID: {node_id}")
-            click.echo(f"Format: JSON")
+            click.echo(f"Format: {format_display}")
             click.echo("\nPayload:")
-            click.echo(json.dumps(payload, indent=2))
+            if format == 'tlv':
+                click.echo(f"Binary TLV ({len(final_payload)} bytes): {final_payload.hex()}")
+            else:
+                click.echo(json.dumps(payload_data, indent=2))
             click.echo("-" * 60)
             return 0
         else:
-            logger.debug("Failed to publish JSON command")
-            raise MQTTError("Failed to send JSON command")
+            logger.debug(f"Failed to publish {format} command")
+            raise MQTTError(f"Failed to send {format.upper()} command")
             
     except MQTTError as e:
         logger.debug(f"MQTT error in send_command: {str(e)}")

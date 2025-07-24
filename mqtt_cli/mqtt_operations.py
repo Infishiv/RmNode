@@ -128,7 +128,9 @@ class MQTTOperations:
             if not self.is_connected():
                 self.connect()
 
-            if isinstance(payload, (dict, list)):
+            # Only convert to JSON if payload is dict/list AND not already bytes/string
+            # This allows binary TLV payloads to be sent without conversion
+            if isinstance(payload, (dict, list)) and not isinstance(payload, (bytes, str)):
                 payload = json.dumps(payload)
 
             # Use QoS 0 for status updates to avoid waiting for acknowledgment
