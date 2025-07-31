@@ -9,6 +9,9 @@ import sys
 import uuid
 import logging
 import time
+import tlv8
+from dataclasses import dataclass
+from typing import Any, Dict, List
 from ..utils.exceptions import MQTTError, MQTTConnectionError
 from ..utils.validators import validate_node_id
 from ..commands.connection import connect_node
@@ -19,6 +22,164 @@ from ..core.mqtt_client import get_active_mqtt_client
 
 # Get logger for this module
 logger = logging.getLogger(__name__)
+
+@dataclass
+class TLVEntry:
+    type_id: int
+    data: Any
+
+class TLVHandler:
+    """Handles TLV encoding/decoding according to ESP RainMaker specification."""
+    
+    # Define TLV structure for node/<node_id>/from-node messages
+    TLV_STRUCTURE = {
+        1: tlv8.DataType.STRING,    # Request ID (22 bytes)
+        3: tlv8.DataType.INTEGER,   # Status (1 byte: 0-4)
+        5: tlv8.DataType.INTEGER,   # Command (2 bytes)
+        6: tlv8.DataType.STRING     # Data Payload (JSON, 0-64KB)
+    }
+
+    # Valid status codes
+    VALID_STATUS = {
+        0: "success",
+        1: "failed",
+        2: "invalid command",
+        3: "authorization failure",
+        4: "not found"
+    }
+
+    # Valid commands
+    VALID_COMMANDS = {
+        0: "get all pending requests",
+        1: "request file upload url",
+        2: "get file download url",
+        3: "confirm file upload success"
+    }
+
+    @staticmethod
+    def json_to_tlv8(json_data: Dict) -> bytearray:
+        """Convert JSON data to TLV8 format using the correct structure from temp folder.
+        
+        Args:
+            json_data: Dictionary with numeric keys matching TLV types
+            
+        Returns:
+            bytearray: Binary TLV formatted data
+        """
+        try:
+            entries = []
+            
+            for key, value in json_data.items():
+                # Convert key to integer (TLV8 type_id)
+                type_id = int(key)
+                
+                # Convert value to appropriate bytes based on type
+                if isinstance(value, str):
+                    value_bytes = value.encode('utf-8')
+                elif isinstance(value, int):
+                    # Convert integer to bytes using little endian
+                    if type_id == 3:  # Status - 1 byte
+                        value_bytes = value.to_bytes(1, "little")
+                    elif type_id == 5:  # Command - 2 bytes
+                        value_bytes = value.to_bytes(2, "little")
+                    else:
+                        # For other integers, determine length dynamically
+                        if value == 0:
+                            value_bytes = b'\x00'
+                        else:
+                            length = (value.bit_length() + 7) // 8
+                            value_bytes = value.to_bytes(length, byteorder='little')
+                elif isinstance(value, bool):
+                    value_bytes = b'\x01' if value else b'\x00'
+                else:
+                    raise ValueError(f"Unsupported type for value: {type(value)}")
+                
+                entries.append(tlv8.Entry(type_id, value_bytes))
+            
+            # Convert to bytearray
+            return bytearray(tlv8.encode(entries))
+            
+        except Exception as e:
+            raise ValueError(f"Invalid payload format: {str(e)}")
+
+    @staticmethod
+    def encode_command(payload: Dict) -> bytearray:
+        """Convert payload to TLV format according to ESP RainMaker specification.
+        
+        Args:
+            payload: Dictionary with numeric keys matching TLV types
+            
+        Returns:
+            bytearray: Binary TLV formatted data
+        """
+        return TLVHandler.json_to_tlv8(payload)
+
+    @staticmethod
+    def decode_message(message: bytes) -> Dict[str, Any]:
+        """Decode TLV message to dictionary.
+        
+        Args:
+            message: Binary TLV data
+            
+        Returns:
+            dict: Decoded message with type IDs as string keys
+        """
+        try:
+            result = tlv8.decode(message, TLVHandler.TLV_STRUCTURE)
+            decoded = {}
+            
+            for entry in result:
+                if entry.type_id == 1:  # Request ID
+                    try:
+                        decoded[str(entry.type_id)] = entry.data.decode('utf-8')
+                    except AttributeError:
+                        decoded[str(entry.type_id)] = str(entry.data)
+                elif entry.type_id == 3:  # Status
+                    try:
+                        if isinstance(entry.data, bytes):
+                            status = int.from_bytes(entry.data, 'little')
+                        else:
+                            status = int(entry.data)
+                        decoded[str(entry.type_id)] = status
+                        decoded['status_desc'] = TLVHandler.VALID_STATUS.get(status, "unknown")
+                    except (TypeError, AttributeError, ValueError):
+                        decoded[str(entry.type_id)] = entry.data
+                elif entry.type_id == 5:  # Command
+                    try:
+                        if isinstance(entry.data, bytes):
+                            command = int.from_bytes(entry.data, 'little')
+                        else:
+                            command = int(entry.data)
+                        decoded[str(entry.type_id)] = command
+                        decoded['command_desc'] = TLVHandler.VALID_COMMANDS.get(command, "unknown")
+                    except (TypeError, AttributeError, ValueError):
+                        decoded[str(entry.type_id)] = entry.data
+                elif entry.type_id == 6:  # JSON data
+                    try:
+                        if isinstance(entry.data, bytes):
+                            decoded[str(entry.type_id)] = json.loads(entry.data.decode('utf-8'))
+                        else:
+                            decoded[str(entry.type_id)] = json.loads(str(entry.data))
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        decoded[str(entry.type_id)] = entry.data
+                else:
+                    # For other types, try to decode as string first
+                    try:
+                        if isinstance(entry.data, bytes):
+                            decoded[str(entry.type_id)] = entry.data.decode('utf-8')
+                        else:
+                            decoded[str(entry.type_id)] = str(entry.data)
+                    except UnicodeDecodeError:
+                        decoded[str(entry.type_id)] = entry.data
+                        
+            return decoded
+        except Exception as e:
+            logger.debug(f"TLV decode failed: {str(e)}")
+            # Return raw data if TLV decode fails
+            return {
+                'raw_data': message.hex(),
+                'error': str(e)
+            }
 
 @click.group()
 def node_command():
@@ -39,178 +200,37 @@ async def ensure_node_connection(ctx, node_id: str) -> bool:
         click.echo(click.style(f"✗ Connection error: {str(e)}", fg='red'), err=True)
         return False
 
-@debug_step("Converting payload for transmission")
-def convert_payload_for_send(payload: dict) -> bytearray:
-    """Convert payload to Binary TLV format for node/<node_id>/from-node topic.
-    
-    According to ESP RainMaker MQTT specification:
-    Topic: node/<node_id>/from-node
-    Purpose: Command requests or responses sent from nodes to the cloud
-    Format: Binary TLV (Tag, Length, Value)
-    
-    TLV Structure:
-    - Tag (1 byte): Command type identifier
-        0x01: Command Request
-        0x02: Command Response
-    - Length (2 bytes): Length of the value in network byte order (big-endian)
-    - Value (variable): The actual command data in JSON format
-    
-    Returns:
-        bytearray: Binary TLV formatted data as per ESP RainMaker specification
-    """
-    try:
-        import struct
-        
-        # Convert payload to JSON string
-        if isinstance(payload, dict):
-            # Check if this is a command request or response
-            if 'cmd' in payload or 'command' in payload:
-                tag = 0x01  # Command Request
-            else:
-                tag = 0x02  # Command Response
-            json_payload = json.dumps(payload)
-        else:
-            # If not a dict, try to parse as JSON first
-            try:
-                parsed = json.loads(str(payload))
-                if 'cmd' in parsed or 'command' in parsed:
-                    tag = 0x01  # Command Request
-                else:
-                    tag = 0x02  # Command Response
-                json_payload = json.dumps(parsed)
-            except json.JSONDecodeError:
-                raise MQTTError("Payload must be a valid JSON object with command information")
-        
-        # Convert JSON to UTF-8 bytes
-        value_bytes = json_payload.encode('utf-8')
-        length = len(value_bytes)
-        
-        if length > 65535:  # 2^16 - 1, maximum value for 2 bytes
-            raise MQTTError("Command payload too large (maximum 65535 bytes)")
-        
-        # Create Binary TLV:
-        # - Tag: 1 byte (0x01 for request, 0x02 for response)
-        # - Length: 2 bytes in network byte order (big-endian)
-        # - Value: JSON bytes
-        tlv_binary = struct.pack('>BH', tag, length) + value_bytes
-        
-        # Convert to bytearray for AWS IoT SDK
-        tlv_bytearray = bytearray(tlv_binary)
-        
-        logger.debug(
-            f"Converted to Binary TLV format:\n"
-            f"  Tag: 0x{tag:02x} ({'Command Request' if tag == 0x01 else 'Command Response'})\n"
-            f"  Length: {length} bytes\n"
-            f"  Value: {json_payload}"
-        )
-        return tlv_bytearray
-        
-    except (json.JSONDecodeError, TypeError, struct.error) as e:
-        logger.debug(f"TLV conversion failed: {str(e)}")
-        raise MQTTError(f"Invalid payload format for TLV conversion: {str(e)}")
-
-@debug_step("Processing received message")
-def process_received_message(message) -> dict:
-    """Process and format received MQTT message for display.
-    
-    This function handles the conversion after receiving messages,
-    parsing both Binary TLV format and JSON for user display.
-    """
-    try:
-        import struct
-        
-        if hasattr(message, 'payload'):
-            payload_bytes = message.payload
-        else:
-            payload_bytes = str(message).encode()
-        
-        # First try to parse as Binary TLV format
-        try:
-            if len(payload_bytes) >= 3:  # Minimum TLV size (1+2+0)
-                # Unpack TLV header: Tag(1 byte) + Length(2 bytes, big-endian)
-                tag, length = struct.unpack('>BH', payload_bytes[:3])
-                
-                if len(payload_bytes) >= 3 + length:
-                    value_bytes = payload_bytes[3:3+length]
-                    value_str = value_bytes.decode('utf-8')
-                    
-                    # Try to parse the value as JSON
-                    try:
-                        value_json = json.loads(value_str)
-                        return {
-                            'type': 'tlv_json',
-                            'content': value_json,
-                            'raw': payload_bytes.hex(),
-                            'tlv_info': {
-                                'tag': f"0x{tag:02x}",
-                                'length': length,
-                                'value': value_str
-                            }
-                        }
-                    except json.JSONDecodeError:
-                        return {
-                            'type': 'tlv_raw',
-                            'content': value_str,
-                            'raw': payload_bytes.hex(),
-                            'tlv_info': {
-                                'tag': f"0x{tag:02x}",
-                                'length': length,
-                                'value': value_str
-                            }
-                        }
-        except (struct.error, UnicodeDecodeError):
-            pass  # Not TLV format, try other parsing methods
-        
-        # Try to parse as regular JSON string
-        try:
-            payload_str = payload_bytes.decode('utf-8')
-            payload_json = json.loads(payload_str)
-            return {
-                'type': 'json',
-                'content': payload_json,
-                'raw': payload_str
-            }
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            pass
-        
-        # Fall back to raw display
-        try:
-            payload_str = payload_bytes.decode('utf-8')
-            return {
-                'type': 'raw',
-                'content': payload_str,
-                'raw': payload_str
-            }
-        except UnicodeDecodeError:
-            return {
-                'type': 'binary',
-                'content': f"Binary data ({len(payload_bytes)} bytes): {payload_bytes.hex()}",
-                'raw': payload_bytes.hex()
-            }
-            
-    except Exception as e:
-        logger.debug(f"Error processing message: {str(e)}")
-        return {
-            'type': 'error',
-            'content': f"Error processing message: {str(e)}",
-            'raw': str(message)
-        }
-
 @node_command.command('send-command')
 @click.option('--node-id', required=True, help='Node ID to send command from')
-@click.option('--json-payload', required=True, type=click.Path(exists=True), help='Path to JSON file to convert to Binary TLV and send from node to cloud')
+@click.option('--json-payload', required=True, type=click.Path(exists=True), help='Path to JSON file with numeric keys (1=Request ID, 3=Status, 5=Command)')
 @click.pass_context
 @debug_log
 def send_command(ctx, node_id: str, json_payload: str):
     """Send a command from node to cloud.
     
-    This command reads a JSON file, converts it to Binary TLV (Tag, Length, Value) format
-    as required by ESP RainMaker MQTT specification, and publishes it to node/<node_id>/from-node topic.
+    This command reads a JSON file and converts it to Binary TLV format
+    according to ESP RainMaker MQTT specification.
     
-    The Binary TLV format is mandatory for from-node messages according to ESP RainMaker specification.
+    TLV Format Requirements:
+    - Type 1: Request ID (T:1, L:22, V:string)
+    - Type 3: Status (T:3, L:1, V:int)
+        0: success
+        1: failed
+        2: invalid command
+        3: authorization failure
+        4: not found
+    - Type 5: Command (T:5, L:2, V:int)
+        0: get all pending requests
+        1: request file upload url
+        2: get file download url
+        3: confirm file upload success
     
-    Examples:
-        node-command send-command --node-id node123 --json-payload ./payload.json
+    Example JSON:
+    {
+        "1": "vHzdmNhrvPQMqbH2RVJM2j",  # Request ID
+        "3": 0,                          # Status code (0-4)
+        "5": 1                           # Command (0-3)
+    }
     """
     try:
         # Create event loop for async operations
@@ -240,12 +260,10 @@ def send_command(ctx, node_id: str, json_payload: str):
             click.echo(click.style(f"✗ Invalid JSON file: {str(e)}", fg='red'), err=True)
             sys.exit(1)
         
-        # Convert JSON to Binary TLV format
-        logger.debug("Converting JSON to Binary TLV format")
+        # Convert to TLV format
         try:
-            final_payload = convert_payload_for_send(payload_data)
-            if not isinstance(final_payload, bytearray):
-                final_payload = bytearray(final_payload)
+            final_payload = TLVHandler.encode_command(payload_data)
+            logger.debug(f"TLV payload created: {final_payload.hex()}")
         except Exception as e:
             logger.debug(f"TLV conversion failed: {str(e)}")
             click.echo(click.style(f"✗ TLV conversion failed: {str(e)}", fg='red'), err=True)
@@ -261,13 +279,20 @@ def send_command(ctx, node_id: str, json_payload: str):
             click.echo("-" * 60)
             click.echo(f"Topic: {topic}")
             click.echo(f"Node ID: {node_id}")
-            click.echo(f"Format: Binary TLV")
-            click.echo("\nPayload:")
-            click.echo(f"Original JSON:")
-            click.echo(json.dumps(payload_data, indent=2))
-            click.echo("\nConverted to Binary TLV:")
+            click.echo("\nTLV Fields:")
+            click.echo(f"  Type 1 (Request ID): {payload_data.get('1', 'missing')}")
+            click.echo(f"  Type 3 (Status): {payload_data.get('3', 'missing')} - {TLVHandler.VALID_STATUS.get(payload_data.get('3'), 'unknown')}")
+            click.echo(f"  Type 5 (Command): {payload_data.get('5', 'missing')} - {TLVHandler.VALID_COMMANDS.get(payload_data.get('5'), 'unknown')}")
+            click.echo("\nTLV Binary:")
             click.echo(f"Size: {len(final_payload)} bytes")
-            click.echo(f"Hex: {bytes(final_payload).hex()}")
+            click.echo(f"Hex: {final_payload.hex()}")
+            click.echo("-" * 60)
+            click.echo("\nExample JSON payload format:")
+            click.echo('{')
+            click.echo('    "1": "vHzdmNhrvPQMqbH2RVJM2j",  # Request ID (string)')
+            click.echo('    "3": 0,                          # Status (0-4)')
+            click.echo('    "5": 1                           # Command (0-3)')
+            click.echo('}')
             click.echo("-" * 60)
             return 0
         else:
@@ -283,6 +308,55 @@ def send_command(ctx, node_id: str, json_payload: str):
         click.echo(click.style(f"✗ Error: {str(e)}", fg='red'), err=True)
         sys.exit(1)
 
+@debug_step("Processing received message")
+def process_received_message(message) -> dict:
+    """Process and format received MQTT message for display."""
+    try:
+        # Get binary data
+        if hasattr(message, 'payload'):
+            payload_bytes = message.payload
+        else:
+            payload_bytes = str(message).encode()
+            
+        # Try to decode as TLV
+        try:
+            decoded = TLVHandler.decode_message(payload_bytes)
+            if decoded:
+                return {
+                    'type': 'tlv',
+                    'content': decoded,
+                    'raw': payload_bytes.hex()
+                }
+        except Exception as e:
+            logger.debug(f"TLV decode failed: {str(e)}")
+            
+        # If TLV fails, try JSON
+        try:
+            payload_str = payload_bytes.decode('utf-8')
+            payload_json = json.loads(payload_str)
+            return {
+                'type': 'json',
+                'content': payload_json,
+                'raw': payload_str
+            }
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            pass
+            
+        # Fall back to raw display
+        return {
+            'type': 'binary',
+            'content': f"Binary data ({len(payload_bytes)} bytes): {payload_bytes.hex()}",
+            'raw': payload_bytes.hex()
+        }
+            
+    except Exception as e:
+        logger.debug(f"Error processing message: {str(e)}")
+        return {
+            'type': 'error',
+            'content': f"Error processing message: {str(e)}",
+            'raw': str(message)
+        }
+
 @node_command.command('monitor')
 @click.option('--node-id', required=True, help='Node ID to monitor for commands')
 @click.option('--timeout', default=60, type=int, help='Monitoring timeout in seconds (default: 60)')
@@ -294,7 +368,7 @@ def monitor(ctx, node_id: str, timeout: int):
     This command subscribes to node/<node_id>/to-node topic to monitor
     commands sent from the cloud infrastructure to the device.
     
-    Messages are automatically processed and converted from Binary TLV or JSON format for display.
+    Messages are automatically processed and decoded from Binary TLV format.
     
     Examples:
         node-command monitor --node-id node123 --timeout 120
@@ -315,7 +389,7 @@ def monitor(ctx, node_id: str, timeout: int):
         mqtt_client = ctx.obj.get('MQTT')
         if not mqtt_client:
             logger.debug("No active MQTT connection found")
-            click.echo(click.style("✗ No active MQTT connection", fg='red'), err=True)
+            click.echo(click.style("✗ No MQTT client available", fg='red'), err=True)
             sys.exit(1)
             
         # Topic for monitoring commands from cloud to node
@@ -337,42 +411,21 @@ def monitor(ctx, node_id: str, timeout: int):
                 click.echo(f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}")
                 click.echo('='*70)
                 
-                # Process message using TLV/JSON conversion
+                # Process message
                 processed = process_received_message(message)
                 
-                if processed['type'] == 'tlv_json':
-                    click.echo("Format: Binary TLV with JSON content")
-                    click.echo(f"TLV Tag: {processed['tlv_info']['tag']}")
-                    click.echo(f"TLV Length: {processed['tlv_info']['length']}")
-                    click.echo("Payload (JSON):")
+                if processed['type'] == 'tlv':
+                    click.echo("Format: Binary TLV")
+                    click.echo("\nDecoded Content:")
                     click.echo(json.dumps(processed['content'], indent=2))
-                    
-                    # Check if it's a device parameter format
-                    if isinstance(processed['content'], dict):
-                        for key, value in processed['content'].items():
-                            if isinstance(value, dict):
-                                click.echo(f"\nDevice: {key}")
-                                for param, param_value in value.items():
-                                    click.echo(f"  {param}: {param_value} ({type(param_value).__name__})")
-                                    
-                elif processed['type'] == 'tlv_raw':
-                    click.echo("Format: Binary TLV with raw content")
-                    click.echo(f"TLV Tag: {processed['tlv_info']['tag']}")
-                    click.echo(f"TLV Length: {processed['tlv_info']['length']}")
-                    click.echo("Payload (Raw):")
-                    click.echo(processed['content'])
                     
                 elif processed['type'] == 'json':
                     click.echo("Format: JSON")
-                    click.echo("Payload (JSON):")
+                    click.echo("Payload:")
                     click.echo(json.dumps(processed['content'], indent=2))
                     
                 elif processed['type'] == 'binary':
                     click.echo("Format: Binary")
-                    click.echo(processed['content'])
-                    
-                elif processed['type'] == 'raw':
-                    click.echo("Format: Raw text")
                     click.echo(processed['content'])
                     
                 else:
@@ -394,7 +447,6 @@ def monitor(ctx, node_id: str, timeout: int):
         click.echo(f"Monitoring commands from cloud to node {node_id}...")
         click.echo(f"Topic: {topic}")
         click.echo(f"Timeout: {timeout} seconds")
-        click.echo(f"Format detection: Binary TLV and JSON supported")
         click.echo("Press Ctrl+C to stop...\n")
         logger.debug("Starting command monitoring loop")
         
@@ -435,7 +487,6 @@ def monitor(ctx, node_id: str, timeout: int):
             click.echo(f"\nCommand monitoring session ended.")
             if message_count > 0:
                 click.echo(f"Total commands received: {message_count}")
-                click.echo("All messages were processed with Binary TLV/JSON format detection.")
             else:
                 click.echo("No commands were received during this session.")
         
