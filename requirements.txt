@@ -1,3 +1,5 @@
 click>=8.0.0
-AWSIoTPythonSDK>=1.4.0
+paho-mqtt>=1.6.1
+AWSIoTPythonSDK>=1.5.2
+tlv8>=0.9.1  # Added for TLV encoding/decoding
 

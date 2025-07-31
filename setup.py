@@ -7,7 +7,8 @@ setup(
     install_requires=[
         "click>=7.0",
         "paho-mqtt>=1.5.0",
-        "AWSIoTPythonSDK>=1.5.0"
+        "AWSIoTPythonSDK>=1.5.0",
+        "tlv8>=0.9.1"
     ],
     entry_points={
         'console_scripts': [

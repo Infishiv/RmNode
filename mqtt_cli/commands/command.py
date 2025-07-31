@@ -77,20 +77,13 @@ class TLVHandler:
                 if isinstance(value, str):
                     value_bytes = value.encode('utf-8')
                 elif isinstance(value, int):
-                    # Convert integer to bytes using little endian
-                    if type_id == 3:  # Status - 1 byte
-                        value_bytes = value.to_bytes(1, "little")
-                    elif type_id == 5:  # Command - 2 bytes
-                        value_bytes = value.to_bytes(2, "little")
-                    else:
-                        # For other integers, determine length dynamically
-                        if value == 0:
-                            value_bytes = b'\x00'
-                        else:
-                            length = (value.bit_length() + 7) // 8
-                            value_bytes = value.to_bytes(length, byteorder='little')
+                    # Convert integer to bytes using little endian (match temp folder)
+                    value_bytes = value.to_bytes(2, "little")
                 elif isinstance(value, bool):
                     value_bytes = b'\x01' if value else b'\x00'
+                elif isinstance(value, dict):
+                    # For Type 6 (data), convert dict to JSON string
+                    value_bytes = json.dumps(value).encode('utf-8')
                 else:
                     raise ValueError(f"Unsupported type for value: {type(value)}")
                 
@@ -202,35 +195,39 @@ async def ensure_node_connection(ctx, node_id: str) -> bool:
 
 @node_command.command('send-command')
 @click.option('--node-id', required=True, help='Node ID to send command from')
-@click.option('--json-payload', required=True, type=click.Path(exists=True), help='Path to JSON file with numeric keys (1=Request ID, 3=Status, 5=Command)')
+@click.option('--request-id', required=True, help='Request ID that uniquely identifies the request (T:1, L:22)')
+@click.option('--status', required=True, type=click.Choice(['0', '1', '2', '3', '4']), help='Status: 0=success, 1=failed, 2=invalid command, 3=authorization failure, 4=not found (T:3, L:1)')
+@click.option('--command', required=True, type=click.Choice(['0', '1', '2', '3']), help='Command: 0=get all pending requests, 1=request file upload url, 2=get file download url, 3=confirm file upload success (T:5, L:2)')
+@click.option('--data-file', type=click.Path(exists=True), help='Path to JSON file for command data (T:6, L:0-64KB)')
 @click.pass_context
 @debug_log
-def send_command(ctx, node_id: str, json_payload: str):
+def send_command(ctx, node_id: str, request_id: str, status: str, command: str, data_file: str = None):
     """Send a command from node to cloud.
     
-    This command reads a JSON file and converts it to Binary TLV format
+    This command builds a Binary TLV format payload from individual parameters
     according to ESP RainMaker MQTT specification.
     
     TLV Format Requirements:
-    - Type 1: Request ID (T:1, L:22, V:string)
-    - Type 3: Status (T:3, L:1, V:int)
+    - Type 1: Request ID (T:1, L:22, V:string) - Required
+    - Type 3: Status (T:3, L:1, V:int) - Required
         0: success
         1: failed
         2: invalid command
         3: authorization failure
         4: not found
-    - Type 5: Command (T:5, L:2, V:int)
+    - Type 5: Command (T:5, L:2, V:int) - Required
         0: get all pending requests
         1: request file upload url
         2: get file download url
         3: confirm file upload success
+    - Type 6: Data (T:6, L:0-64KB, V:JSON) - Optional
     
-    Example JSON:
-    {
-        "1": "vHzdmNhrvPQMqbH2RVJM2j",  # Request ID
-        "3": 0,                          # Status code (0-4)
-        "5": 1                           # Command (0-3)
-    }
+    Examples:
+        # Basic command
+        node-command send-command --node-id node123 --request-id "req123" --status 0 --command 1
+        
+        # Command with data
+        node-command send-command --node-id node123 --request-id "req123" --status 0 --command 1 --data-file data.json
     """
     try:
         # Create event loop for async operations
@@ -250,14 +247,30 @@ def send_command(ctx, node_id: str, json_payload: str):
             click.echo(click.style("✗ No MQTT client available", fg='red'), err=True)
             sys.exit(1)
 
-        # Read and validate JSON file
+        # Build payload from individual parameters
         try:
-            logger.debug(f"Reading JSON file: {json_payload}")
-            with open(json_payload, 'r') as f:
-                payload_data = json.load(f)
+            logger.debug("Building payload from individual parameters")
+            payload_data = {
+                '1': request_id,  # Request ID
+                '3': int(status),  # Status
+                '5': int(command)  # Command
+            }
+            
+            # Add data file if provided
+            if data_file:
+                logger.debug(f"Reading data file: {data_file}")
+                try:
+                    with open(data_file, 'r') as f:
+                        data_content = json.load(f)
+                    payload_data['6'] = data_content
+                except Exception as e:
+                    logger.debug(f"Invalid data file: {str(e)}")
+                    click.echo(click.style(f"✗ Invalid data file: {str(e)}", fg='red'), err=True)
+                    sys.exit(1)
+                    
         except Exception as e:
-            logger.debug(f"Invalid JSON file: {str(e)}")
-            click.echo(click.style(f"✗ Invalid JSON file: {str(e)}", fg='red'), err=True)
+            logger.debug(f"Error building payload: {str(e)}")
+            click.echo(click.style(f"✗ Error building payload: {str(e)}", fg='red'), err=True)
             sys.exit(1)
         
         # Convert to TLV format
@@ -283,16 +296,18 @@ def send_command(ctx, node_id: str, json_payload: str):
             click.echo(f"  Type 1 (Request ID): {payload_data.get('1', 'missing')}")
             click.echo(f"  Type 3 (Status): {payload_data.get('3', 'missing')} - {TLVHandler.VALID_STATUS.get(payload_data.get('3'), 'unknown')}")
             click.echo(f"  Type 5 (Command): {payload_data.get('5', 'missing')} - {TLVHandler.VALID_COMMANDS.get(payload_data.get('5'), 'unknown')}")
+            if '6' in payload_data:
+                click.echo(f"  Type 6 (Data): {json.dumps(payload_data.get('6'), indent=2)}")
             click.echo("\nTLV Binary:")
             click.echo(f"Size: {len(final_payload)} bytes")
             click.echo(f"Hex: {final_payload.hex()}")
             click.echo("-" * 60)
-            click.echo("\nExample JSON payload format:")
-            click.echo('{')
-            click.echo('    "1": "vHzdmNhrvPQMqbH2RVJM2j",  # Request ID (string)')
-            click.echo('    "3": 0,                          # Status (0-4)')
-            click.echo('    "5": 1                           # Command (0-3)')
-            click.echo('}')
+            click.echo("\nCommand Parameters:")
+            click.echo(f"  --request-id: {request_id}")
+            click.echo(f"  --status: {status} ({TLVHandler.VALID_STATUS.get(int(status), 'unknown')})")
+            click.echo(f"  --command: {command} ({TLVHandler.VALID_COMMANDS.get(int(command), 'unknown')})")
+            if data_file:
+                click.echo(f"  --data-file: {data_file}")
             click.echo("-" * 60)
             return 0
         else:
