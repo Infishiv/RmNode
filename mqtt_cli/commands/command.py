@@ -51,61 +51,12 @@ class TLVHandler:
     # Valid commands
     VALID_COMMANDS = {
         0: "get all pending requests",
-        1: "request file upload url",
-        2: "get file download url",
-        3: "confirm file upload success"
+        16: "request file upload url",
+        17: "get file download url",
+        20: "confirm file upload success"
     }
 
-    @staticmethod
-    def json_to_tlv8(json_data: Dict) -> bytearray:
-        """Convert JSON data to TLV8 format using the correct structure from temp folder.
-        
-        Args:
-            json_data: Dictionary with numeric keys matching TLV types
-            
-        Returns:
-            bytearray: Binary TLV formatted data
-        """
-        try:
-            entries = []
-            
-            for key, value in json_data.items():
-                # Convert key to integer (TLV8 type_id)
-                type_id = int(key)
-                
-                # Convert value to appropriate bytes based on type
-                if isinstance(value, str):
-                    value_bytes = value.encode('utf-8')
-                elif isinstance(value, int):
-                    # Convert integer to bytes using little endian (match temp folder)
-                    value_bytes = value.to_bytes(2, "little")
-                elif isinstance(value, bool):
-                    value_bytes = b'\x01' if value else b'\x00'
-                elif isinstance(value, dict):
-                    # For Type 6 (data), convert dict to JSON string
-                    value_bytes = json.dumps(value).encode('utf-8')
-                else:
-                    raise ValueError(f"Unsupported type for value: {type(value)}")
-                
-                entries.append(tlv8.Entry(type_id, value_bytes))
-            
-            # Convert to bytearray
-            return bytearray(tlv8.encode(entries))
-            
-        except Exception as e:
-            raise ValueError(f"Invalid payload format: {str(e)}")
 
-    @staticmethod
-    def encode_command(payload: Dict) -> bytearray:
-        """Convert payload to TLV format according to ESP RainMaker specification.
-        
-        Args:
-            payload: Dictionary with numeric keys matching TLV types
-            
-        Returns:
-            bytearray: Binary TLV formatted data
-        """
-        return TLVHandler.json_to_tlv8(payload)
 
     @staticmethod
     def decode_message(message: bytes) -> Dict[str, Any]:
@@ -197,17 +148,17 @@ async def ensure_node_connection(ctx, node_id: str) -> bool:
 @click.option('--node-id', required=True, help='Node ID to send command from')
 @click.option('--request-id', required=True, help='Request ID that uniquely identifies the request (T:1, L:22)')
 @click.option('--status', required=True, type=click.Choice(['0', '1', '2', '3', '4']), help='Status: 0=success, 1=failed, 2=invalid command, 3=authorization failure, 4=not found (T:3, L:1)')
-@click.option('--command', required=True, type=click.Choice(['0', '1', '2', '3']), help='Command: 0=get all pending requests, 1=request file upload url, 2=get file download url, 3=confirm file upload success (T:5, L:2)')
-@click.option('--data-file', type=click.Path(exists=True), help='Path to JSON file for command data (T:6, L:0-64KB)')
+@click.option('--command', required=True, type=click.Choice(['0', '16', '17', '20']), help='Command: 0=get all pending requests, 16=request file upload url, 17=get file download url, 20=confirm file upload success (T:5, L:2)')
+@click.option('--metadata', help='JSON object of command data (T:6, L:0-64KB)')
 @click.pass_context
 @debug_log
-def send_command(ctx, node_id: str, request_id: str, status: str, command: str, data_file: str = None):
-    """Send a command from node to cloud.
+def send_command(ctx, node_id: str, request_id: str, status: str, command: str, metadata: str = None):
+    """Send a command from node to cloud using TLV8 format.
     
-    This command builds a Binary TLV format payload from individual parameters
-    according to ESP RainMaker MQTT specification.
+    This command builds a Binary TLV8 format payload from individual parameters
+    according to ESP RainMaker MQTT specification, using the logic from temp01/.
     
-    TLV Format Requirements:
+    TLV8 Format Requirements:
     - Type 1: Request ID (T:1, L:22, V:string) - Required
     - Type 3: Status (T:3, L:1, V:int) - Required
         0: success
@@ -217,17 +168,17 @@ def send_command(ctx, node_id: str, request_id: str, status: str, command: str, 
         4: not found
     - Type 5: Command (T:5, L:2, V:int) - Required
         0: get all pending requests
-        1: request file upload url
-        2: get file download url
-        3: confirm file upload success
-    - Type 6: Data (T:6, L:0-64KB, V:JSON) - Optional
+        16: request file upload url
+        17: get file download url
+        20: confirm file upload success
+    - Type 6: Metadata (T:6, L:0-64KB, V:JSON) - Optional
     
     Examples:
         # Basic command
-        node-command send-command --node-id node123 --request-id "req123" --status 0 --command 1
+        node-command send-command --node-id node123 --request-id "req123" --status 0 --command 16
         
-        # Command with data
-        node-command send-command --node-id node123 --request-id "req123" --status 0 --command 1 --data-file data.json
+        # Command with metadata
+        node-command send-command --node-id node123 --request-id "req123" --status 0 --command 16 --metadata '{"file_id": "abc123", "size": 1024}'
     """
     try:
         # Create event loop for async operations
@@ -247,7 +198,7 @@ def send_command(ctx, node_id: str, request_id: str, status: str, command: str, 
             click.echo(click.style("✗ No MQTT client available", fg='red'), err=True)
             sys.exit(1)
 
-        # Build payload from individual parameters
+        # Build payload from individual parameters using temp01 logic
         try:
             logger.debug("Building payload from individual parameters")
             payload_data = {
@@ -256,16 +207,16 @@ def send_command(ctx, node_id: str, request_id: str, status: str, command: str, 
                 '5': int(command)  # Command
             }
             
-            # Add data file if provided
-            if data_file:
-                logger.debug(f"Reading data file: {data_file}")
+            # Add metadata if provided
+            if metadata:
+                logger.debug(f"Processing metadata: {metadata}")
                 try:
-                    with open(data_file, 'r') as f:
-                        data_content = json.load(f)
-                    payload_data['6'] = data_content
-                except Exception as e:
-                    logger.debug(f"Invalid data file: {str(e)}")
-                    click.echo(click.style(f"✗ Invalid data file: {str(e)}", fg='red'), err=True)
+                    # Parse metadata as JSON
+                    metadata_json = json.loads(metadata)
+                    payload_data['6'] = metadata_json
+                except json.JSONDecodeError as e:
+                    logger.debug(f"Invalid metadata JSON: {str(e)}")
+                    click.echo(click.style(f"✗ Invalid metadata JSON: {str(e)}", fg='red'), err=True)
                     sys.exit(1)
                     
         except Exception as e:
@@ -273,46 +224,74 @@ def send_command(ctx, node_id: str, request_id: str, status: str, command: str, 
             click.echo(click.style(f"✗ Error building payload: {str(e)}", fg='red'), err=True)
             sys.exit(1)
         
-        # Convert to TLV format
+        # Convert to TLV8 format using temp01 logic
         try:
-            final_payload = TLVHandler.encode_command(payload_data)
-            logger.debug(f"TLV payload created: {final_payload.hex()}")
+            logger.debug("Converting to TLV8 format using temp01 logic")
+            entries = []
+            
+            for key, value in payload_data.items():
+                # Convert key to integer (TLV8 type_id)
+                type_id = int(key)
+                
+                # Convert value to appropriate bytes based on type (from temp01)
+                if isinstance(value, str):
+                    value_bytes = value.encode('utf-8')
+                elif isinstance(value, int):
+                    # Convert integer to bytes using little endian (from temp01)
+                    value_bytes = value.to_bytes(2, "little")
+                elif isinstance(value, bool):
+                    value_bytes = b'\x01' if value else b'\x00'
+                elif isinstance(value, dict):
+                    # For Type 6 (metadata), convert dict to JSON string
+                    value_bytes = json.dumps(value).encode('utf-8')
+                else:
+                    raise ValueError(f"Unsupported type for value: {type(value)}")
+                
+                entries.append(tlv8.Entry(type_id, value_bytes))
+            
+            # Encode to bytearray (from temp01)
+            encoded_data = tlv8.encode(entries)
+            final_payload = bytearray(encoded_data)
+            
+            logger.debug(f"TLV8 payload created: {final_payload.hex()}")
+            
         except Exception as e:
-            logger.debug(f"TLV conversion failed: {str(e)}")
-            click.echo(click.style(f"✗ TLV conversion failed: {str(e)}", fg='red'), err=True)
+            logger.debug(f"TLV8 conversion failed: {str(e)}")
+            click.echo(click.style(f"✗ TLV8 conversion failed: {str(e)}", fg='red'), err=True)
             sys.exit(1)
         
         # Publish to from-node topic
         topic = f"node/{node_id}/from-node"
-        logger.debug(f"Publishing Binary TLV to topic: {topic}")
+        logger.debug(f"Publishing TLV8 to topic: {topic}")
         if mqtt_client.publish(topic, final_payload, qos=1):
-            logger.debug("Binary TLV command published successfully")
-            click.echo(click.style(f"✓ Sent Binary TLV command from node {node_id} to cloud", fg='green'))
+            logger.debug("TLV8 command published successfully")
+            click.echo(click.style(f"✓ Sent TLV8 command from node {node_id} to cloud", fg='green'))
             click.echo("\nCommand Details:")
             click.echo("-" * 60)
             click.echo(f"Topic: {topic}")
             click.echo(f"Node ID: {node_id}")
-            click.echo("\nTLV Fields:")
+            click.echo("\nTLV8 Fields:")
             click.echo(f"  Type 1 (Request ID): {payload_data.get('1', 'missing')}")
             click.echo(f"  Type 3 (Status): {payload_data.get('3', 'missing')} - {TLVHandler.VALID_STATUS.get(payload_data.get('3'), 'unknown')}")
             click.echo(f"  Type 5 (Command): {payload_data.get('5', 'missing')} - {TLVHandler.VALID_COMMANDS.get(payload_data.get('5'), 'unknown')}")
             if '6' in payload_data:
-                click.echo(f"  Type 6 (Data): {json.dumps(payload_data.get('6'), indent=2)}")
-            click.echo("\nTLV Binary:")
+                click.echo(f"  Type 6 (Metadata): {json.dumps(payload_data.get('6'), indent=2)}")
+            click.echo("\nTLV8 Binary:")
             click.echo(f"Size: {len(final_payload)} bytes")
             click.echo(f"Hex: {final_payload.hex()}")
             click.echo("-" * 60)
             click.echo("\nCommand Parameters:")
+            click.echo(f"  --node-id: {node_id}")
             click.echo(f"  --request-id: {request_id}")
             click.echo(f"  --status: {status} ({TLVHandler.VALID_STATUS.get(int(status), 'unknown')})")
             click.echo(f"  --command: {command} ({TLVHandler.VALID_COMMANDS.get(int(command), 'unknown')})")
-            if data_file:
-                click.echo(f"  --data-file: {data_file}")
+            if metadata:
+                click.echo(f"  --metadata: {metadata}")
             click.echo("-" * 60)
             return 0
         else:
-            logger.debug("Failed to publish Binary TLV command")
-            raise MQTTError("Failed to send Binary TLV command")
+            logger.debug("Failed to publish TLV8 command")
+            raise MQTTError("Failed to send TLV8 command")
             
     except MQTTError as e:
         logger.debug(f"MQTT error in send_command: {str(e)}")
