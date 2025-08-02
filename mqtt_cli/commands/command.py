@@ -10,6 +10,8 @@ import uuid
 import logging
 import time
 import tlv8
+import os
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Any, Dict, List
 from ..utils.exceptions import MQTTError, MQTTConnectionError
@@ -20,110 +22,27 @@ from ..mqtt_operations import MQTTOperations
 from ..utils.debug_logger import debug_log, debug_step
 from ..core.mqtt_client import get_active_mqtt_client
 
+# Import the send command function
+from .send_command_fn import publish_tlv8_payload
+
 # Get logger for this module
 logger = logging.getLogger(__name__)
 
-@dataclass
-class TLVEntry:
-    type_id: int
-    data: Any
+# Valid status codes and commands for reference
+VALID_STATUS = {
+    0: "success",
+    1: "failed",
+    2: "invalid command", 
+    3: "authorization failure",
+    4: "not found"
+}
 
-class TLVHandler:
-    """Handles TLV encoding/decoding according to ESP RainMaker specification."""
-    
-    # Define TLV structure for node/<node_id>/from-node messages
-    TLV_STRUCTURE = {
-        1: tlv8.DataType.STRING,    # Request ID (22 bytes)
-        3: tlv8.DataType.INTEGER,   # Status (1 byte: 0-4)
-        5: tlv8.DataType.INTEGER,   # Command (2 bytes)
-        6: tlv8.DataType.STRING     # Data Payload (JSON, 0-64KB)
-    }
-
-    # Valid status codes
-    VALID_STATUS = {
-        0: "success",
-        1: "failed",
-        2: "invalid command",
-        3: "authorization failure",
-        4: "not found"
-    }
-
-    # Valid commands
-    VALID_COMMANDS = {
-        0: "get all pending requests",
-        16: "request file upload url",
-        17: "get file download url",
-        20: "confirm file upload success"
-    }
-
-
-
-    @staticmethod
-    def decode_message(message: bytes) -> Dict[str, Any]:
-        """Decode TLV message to dictionary.
-        
-        Args:
-            message: Binary TLV data
-            
-        Returns:
-            dict: Decoded message with type IDs as string keys
-        """
-        try:
-            result = tlv8.decode(message, TLVHandler.TLV_STRUCTURE)
-            decoded = {}
-            
-            for entry in result:
-                if entry.type_id == 1:  # Request ID
-                    try:
-                        decoded[str(entry.type_id)] = entry.data.decode('utf-8')
-                    except AttributeError:
-                        decoded[str(entry.type_id)] = str(entry.data)
-                elif entry.type_id == 3:  # Status
-                    try:
-                        if isinstance(entry.data, bytes):
-                            status = int.from_bytes(entry.data, 'little')
-                        else:
-                            status = int(entry.data)
-                        decoded[str(entry.type_id)] = status
-                        decoded['status_desc'] = TLVHandler.VALID_STATUS.get(status, "unknown")
-                    except (TypeError, AttributeError, ValueError):
-                        decoded[str(entry.type_id)] = entry.data
-                elif entry.type_id == 5:  # Command
-                    try:
-                        if isinstance(entry.data, bytes):
-                            command = int.from_bytes(entry.data, 'little')
-                        else:
-                            command = int(entry.data)
-                        decoded[str(entry.type_id)] = command
-                        decoded['command_desc'] = TLVHandler.VALID_COMMANDS.get(command, "unknown")
-                    except (TypeError, AttributeError, ValueError):
-                        decoded[str(entry.type_id)] = entry.data
-                elif entry.type_id == 6:  # JSON data
-                    try:
-                        if isinstance(entry.data, bytes):
-                            decoded[str(entry.type_id)] = json.loads(entry.data.decode('utf-8'))
-                        else:
-                            decoded[str(entry.type_id)] = json.loads(str(entry.data))
-                    except (json.JSONDecodeError, UnicodeDecodeError):
-                        decoded[str(entry.type_id)] = entry.data
-                else:
-                    # For other types, try to decode as string first
-                    try:
-                        if isinstance(entry.data, bytes):
-                            decoded[str(entry.type_id)] = entry.data.decode('utf-8')
-                        else:
-                            decoded[str(entry.type_id)] = str(entry.data)
-                    except UnicodeDecodeError:
-                        decoded[str(entry.type_id)] = entry.data
-                        
-            return decoded
-        except Exception as e:
-            logger.debug(f"TLV decode failed: {str(e)}")
-            # Return raw data if TLV decode fails
-            return {
-                'raw_data': message.hex(),
-                'error': str(e)
-            }
+VALID_COMMANDS = {
+    0: "get all pending requests",
+    16: "request file upload url",
+    17: "get file download url",
+    20: "confirm file upload success"
+}
 
 @click.group()
 def node_command():
@@ -155,23 +74,8 @@ async def ensure_node_connection(ctx, node_id: str) -> bool:
 def send_command(ctx, node_id: str, request_id: str, status: str, command: str, metadata: str = None):
     """Send a command from node to cloud using TLV8 format.
     
-    This command builds a Binary TLV8 format payload from individual parameters
-    according to ESP RainMaker MQTT specification, using the logic from temp01/.
-    
-    TLV8 Format Requirements:
-    - Type 1: Request ID (T:1, L:22, V:string) - Required
-    - Type 3: Status (T:3, L:1, V:int) - Required
-        0: success
-        1: failed
-        2: invalid command
-        3: authorization failure
-        4: not found
-    - Type 5: Command (T:5, L:2, V:int) - Required
-        0: get all pending requests
-        16: request file upload url
-        17: get file download url
-        20: confirm file upload success
-    - Type 6: Metadata (T:6, L:0-64KB, V:JSON) - Optional
+    This command uses the centralized connection management like other CLI commands
+    and the single_node_publisher logic for TLV8 conversion.
     
     Examples:
         # Basic command
@@ -181,122 +85,75 @@ def send_command(ctx, node_id: str, request_id: str, status: str, command: str, 
         node-command send-command --node-id node123 --request-id "req123" --status 0 --command 16 --metadata '{"file_id": "abc123", "size": 1024}'
     """
     try:
-        # Create event loop for async operations
-        logger.debug("Creating event loop for async operations")
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+        # Validate node ID
+        logger.debug(f"Validating node ID: {node_id}")
+        validate_node_id(node_id)
         
-        # Ensure connection
-        logger.debug(f"Ensuring connection to node {node_id}")
-        if not loop.run_until_complete(ensure_node_connection(ctx, node_id)):
-            click.echo(click.style("✗ Failed to connect", fg='red'), err=True)
+        # Get broker and cert_path from context
+        broker = ctx.obj.get('BROKER')
+        cert_path = ctx.obj.get('CERT_FOLDER')
+        
+        if not broker:
+            logger.debug("No broker found in context")
+            click.echo(click.style("✗ No broker URL configured", fg='red'), err=True)
             sys.exit(1)
             
-        mqtt_client = ctx.obj.get('MQTT')
-        if not mqtt_client:
-            logger.debug("No active MQTT connection found")
-            click.echo(click.style("✗ No MQTT client available", fg='red'), err=True)
-            sys.exit(1)
-
-        # Build payload from individual parameters using temp01 logic
-        try:
-            logger.debug("Building payload from individual parameters")
-            payload_data = {
-                '1': request_id,  # Request ID
-                '3': int(status),  # Status
-                '5': int(command)  # Command
-            }
-            
-            # Add metadata if provided
-            if metadata:
-                logger.debug(f"Processing metadata: {metadata}")
-                try:
-                    # Parse metadata as JSON
-                    metadata_json = json.loads(metadata)
-                    payload_data['6'] = metadata_json
-                except json.JSONDecodeError as e:
-                    logger.debug(f"Invalid metadata JSON: {str(e)}")
-                    click.echo(click.style(f"✗ Invalid metadata JSON: {str(e)}", fg='red'), err=True)
-                    sys.exit(1)
-                    
-        except Exception as e:
-            logger.debug(f"Error building payload: {str(e)}")
-            click.echo(click.style(f"✗ Error building payload: {str(e)}", fg='red'), err=True)
+        if not cert_path:
+            logger.debug("No certificate path found in context")
+            click.echo(click.style("✗ No certificate path configured", fg='red'), err=True)
             sys.exit(1)
         
-        # Convert to TLV8 format using temp01 logic
-        try:
-            logger.debug("Converting to TLV8 format using temp01 logic")
-            entries = []
-            
-            for key, value in payload_data.items():
-                # Convert key to integer (TLV8 type_id)
-                type_id = int(key)
-                
-                # Convert value to appropriate bytes based on type (from temp01)
-                if isinstance(value, str):
-                    value_bytes = value.encode('utf-8')
-                elif isinstance(value, int):
-                    # Convert integer to bytes using little endian (from temp01)
-                    value_bytes = value.to_bytes(2, "little")
-                elif isinstance(value, bool):
-                    value_bytes = b'\x01' if value else b'\x00'
-                elif isinstance(value, dict):
-                    # For Type 6 (metadata), convert dict to JSON string
-                    value_bytes = json.dumps(value).encode('utf-8')
-                else:
-                    raise ValueError(f"Unsupported type for value: {type(value)}")
-                
-                entries.append(tlv8.Entry(type_id, value_bytes))
-            
-            # Encode to bytearray (from temp01)
-            encoded_data = tlv8.encode(entries)
-            final_payload = bytearray(encoded_data)
-            
-            logger.debug(f"TLV8 payload created: {final_payload.hex()}")
-            
-        except Exception as e:
-            logger.debug(f"TLV8 conversion failed: {str(e)}")
-            click.echo(click.style(f"✗ TLV8 conversion failed: {str(e)}", fg='red'), err=True)
-            sys.exit(1)
+        logger.debug(f"Using broker: {broker}")
+        logger.debug(f"Using cert path: {cert_path}")
         
-        # Publish to from-node topic
-        topic = f"node/{node_id}/from-node"
-        logger.debug(f"Publishing TLV8 to topic: {topic}")
-        if mqtt_client.publish(topic, final_payload, qos=1):
-            logger.debug("TLV8 command published successfully")
-            click.echo(click.style(f"✓ Sent TLV8 command from node {node_id} to cloud", fg='green'))
-            click.echo("\nCommand Details:")
-            click.echo("-" * 60)
-            click.echo(f"Topic: {topic}")
-            click.echo(f"Node ID: {node_id}")
-            click.echo("\nTLV8 Fields:")
-            click.echo(f"  Type 1 (Request ID): {payload_data.get('1', 'missing')}")
-            click.echo(f"  Type 3 (Status): {payload_data.get('3', 'missing')} - {TLVHandler.VALID_STATUS.get(payload_data.get('3'), 'unknown')}")
-            click.echo(f"  Type 5 (Command): {payload_data.get('5', 'missing')} - {TLVHandler.VALID_COMMANDS.get(payload_data.get('5'), 'unknown')}")
-            if '6' in payload_data:
-                click.echo(f"  Type 6 (Metadata): {json.dumps(payload_data.get('6'), indent=2)}")
-            click.echo("\nTLV8 Binary:")
-            click.echo(f"Size: {len(final_payload)} bytes")
-            click.echo(f"Hex: {final_payload.hex()}")
-            click.echo("-" * 60)
-            click.echo("\nCommand Parameters:")
-            click.echo(f"  --node-id: {node_id}")
-            click.echo(f"  --request-id: {request_id}")
-            click.echo(f"  --status: {status} ({TLVHandler.VALID_STATUS.get(int(status), 'unknown')})")
-            click.echo(f"  --command: {command} ({TLVHandler.VALID_COMMANDS.get(int(command), 'unknown')})")
-            if metadata:
-                click.echo(f"  --metadata: {metadata}")
-            click.echo("-" * 60)
+        # Create payload with TLV8 format
+        payload = {
+            "1": request_id,           # Request ID (string)
+            "3": int(status),          # Status (integer)
+            "5": int(command)          # Command (integer)
+        }
+        
+        # Add metadata if provided
+        if metadata:
+            try:
+                metadata_json = json.loads(metadata)
+                payload["6"] = metadata_json  # Metadata (JSON object)
+                logger.debug(f"Added metadata: {metadata_json}")
+            except json.JSONDecodeError as e:
+                logger.debug(f"Invalid metadata JSON: {str(e)}")
+                click.echo(click.style(f"✗ Invalid metadata JSON: {str(e)}", fg='red'), err=True)
+                sys.exit(1)
+        
+        logger.debug(f"Created payload: {payload}")
+        
+        # Display command details
+        click.echo("=== Sending Command ===")
+        click.echo(f"Node ID: {node_id}")
+        click.echo(f"Request ID: {request_id}")
+        click.echo(f"Status: {status} ({VALID_STATUS.get(int(status), 'unknown')})")
+        click.echo(f"Command: {command} ({VALID_COMMANDS.get(int(command), 'unknown')})")
+        if metadata:
+            click.echo(f"Metadata: {metadata}")
+        click.echo("=" * 30)
+        
+        # Send command using the imported function
+        success = publish_tlv8_payload(
+            node_id=node_id,
+            broker=broker,
+            cert_base_path=cert_path,
+            payload=payload
+        )
+        
+        if success:
+            click.echo(click.style("✓ Command sent successfully!", fg='green'))
+            click.echo(f"Request ID: {request_id}")
+            click.echo(f"Status: {VALID_STATUS.get(int(status), 'unknown')}")
+            click.echo(f"Command: {VALID_COMMANDS.get(int(command), 'unknown')}")
             return 0
         else:
-            logger.debug("Failed to publish TLV8 command")
-            raise MQTTError("Failed to send TLV8 command")
+            click.echo(click.style("✗ Failed to send command", fg='red'), err=True)
+            sys.exit(1)
             
-    except MQTTError as e:
-        logger.debug(f"MQTT error in send_command: {str(e)}")
-        click.echo(click.style(f"✗ Failed to send command: {str(e)}", fg='red'), err=True)
-        sys.exit(1)
     except Exception as e:
         logger.debug(f"Error in send_command: {str(e)}")
         click.echo(click.style(f"✗ Error: {str(e)}", fg='red'), err=True)
@@ -312,17 +169,62 @@ def process_received_message(message) -> dict:
         else:
             payload_bytes = str(message).encode()
             
-        # Try to decode as TLV
+        # Try to decode as TLV8
         try:
-            decoded = TLVHandler.decode_message(payload_bytes)
+            decoded = tlv8.decode(payload_bytes)
             if decoded:
+                # Convert to readable format
+                decoded_dict = {}
+                for entry in decoded:
+                    if entry.type_id == 1:  # Request ID
+                        try:
+                            decoded_dict[str(entry.type_id)] = entry.data.decode('utf-8')
+                        except:
+                            decoded_dict[str(entry.type_id)] = str(entry.data)
+                    elif entry.type_id == 3:  # Status
+                        try:
+                            if isinstance(entry.data, bytes):
+                                status = int.from_bytes(entry.data, 'little')
+                            else:
+                                status = int(entry.data)
+                            decoded_dict[str(entry.type_id)] = status
+                            decoded_dict['status_desc'] = VALID_STATUS.get(status, "unknown")
+                        except:
+                            decoded_dict[str(entry.type_id)] = entry.data
+                    elif entry.type_id == 5:  # Command
+                        try:
+                            if isinstance(entry.data, bytes):
+                                command = int.from_bytes(entry.data, 'little')
+                            else:
+                                command = int(entry.data)
+                            decoded_dict[str(entry.type_id)] = command
+                            decoded_dict['command_desc'] = VALID_COMMANDS.get(command, "unknown")
+                        except:
+                            decoded_dict[str(entry.type_id)] = entry.data
+                    elif entry.type_id == 6:  # Metadata
+                        try:
+                            if isinstance(entry.data, bytes):
+                                decoded_dict[str(entry.type_id)] = json.loads(entry.data.decode('utf-8'))
+                            else:
+                                decoded_dict[str(entry.type_id)] = json.loads(str(entry.data))
+                        except:
+                            decoded_dict[str(entry.type_id)] = entry.data
+                    else:
+                        try:
+                            if isinstance(entry.data, bytes):
+                                decoded_dict[str(entry.type_id)] = entry.data.decode('utf-8')
+                            else:
+                                decoded_dict[str(entry.type_id)] = str(entry.data)
+                        except:
+                            decoded_dict[str(entry.type_id)] = entry.data
+                
                 return {
                     'type': 'tlv',
-                    'content': decoded,
+                    'content': decoded_dict,
                     'raw': payload_bytes.hex()
                 }
         except Exception as e:
-            logger.debug(f"TLV decode failed: {str(e)}")
+            logger.debug(f"TLV8 decode failed: {str(e)}")
             
         # If TLV fails, try JSON
         try:
