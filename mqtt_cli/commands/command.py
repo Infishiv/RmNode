@@ -66,12 +66,12 @@ async def ensure_node_connection(ctx, node_id: str) -> bool:
 @node_command.command('send-command')
 @click.option('--node-id', required=True, help='Node ID to send command from')
 @click.option('--request-id', required=True, help='Request ID that uniquely identifies the request (T:1, L:22)')
-@click.option('--status', required=True, type=click.Choice(['0', '1', '2', '3', '4']), help='Status: 0=success, 1=failed, 2=invalid command, 3=authorization failure, 4=not found (T:3, L:1)')
-@click.option('--command', required=True, type=click.Choice(['0', '16', '17', '20']), help='Command: 0=get all pending requests, 16=request file upload url, 17=get file download url, 20=confirm file upload success (T:5, L:2)')
+@click.option('--status', required=True, type=int, help='Status: 0=success, 1=failed, 2=invalid command, 3=authorization failure, 4=not found (T:3, L:1)')
+@click.option('--command', required=True, type=int, help='Command: 0=get all pending requests, 16=request file upload url, 17=get file download url, 20=confirm file upload success (T:5, L:2)')
 @click.option('--metadata', help='JSON object of command data (T:6, L:0-64KB)')
 @click.pass_context
 @debug_log
-def send_command(ctx, node_id: str, request_id: str, status: str, command: str, metadata: str = None):
+def send_command(ctx, node_id: str, request_id: str, status: int, command: int, metadata: str = None):
     """Send a command from node to cloud using TLV8 format.
     
     This command uses the centralized connection management like other CLI commands
@@ -109,8 +109,8 @@ def send_command(ctx, node_id: str, request_id: str, status: str, command: str, 
         # Create payload with TLV8 format
         payload = {
             "1": request_id,           # Request ID (string)
-            "3": int(status),          # Status (integer)
-            "5": int(command)          # Command (integer)
+            "3": status,               # Status (integer)
+            "5": command               # Command (integer)
         }
         
         # Add metadata if provided
@@ -130,8 +130,8 @@ def send_command(ctx, node_id: str, request_id: str, status: str, command: str, 
         click.echo("=== Sending Command ===")
         click.echo(f"Node ID: {node_id}")
         click.echo(f"Request ID: {request_id}")
-        click.echo(f"Status: {status} ({VALID_STATUS.get(int(status), 'unknown')})")
-        click.echo(f"Command: {command} ({VALID_COMMANDS.get(int(command), 'unknown')})")
+        click.echo(f"Status: {status} ({VALID_STATUS.get(status, 'unknown')})")
+        click.echo(f"Command: {command} ({VALID_COMMANDS.get(command, 'unknown')})")
         if metadata:
             click.echo(f"Metadata: {metadata}")
         click.echo("=" * 30)
@@ -147,8 +147,8 @@ def send_command(ctx, node_id: str, request_id: str, status: str, command: str, 
         if success:
             click.echo(click.style("✓ Command sent successfully!", fg='green'))
             click.echo(f"Request ID: {request_id}")
-            click.echo(f"Status: {VALID_STATUS.get(int(status), 'unknown')}")
-            click.echo(f"Command: {VALID_COMMANDS.get(int(command), 'unknown')}")
+            click.echo(f"Status: {VALID_STATUS.get(status, 'unknown')}")
+            click.echo(f"Command: {VALID_COMMANDS.get(command, 'unknown')}")
             return 0
         else:
             click.echo(click.style("✗ Failed to send command", fg='red'), err=True)
